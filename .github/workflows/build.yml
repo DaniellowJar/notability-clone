@@ -61,7 +61,7 @@ jobs:
         working-directory: App
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/NotabilityClone.app Payload/
+          cp -R build/Release-iphoneos/NotabilityClone.app Payload/
           zip -qr NotabilityClone.ipa Payload
           ls -lh NotabilityClone.ipa
       - uses: actions/upload-artifact@v4
