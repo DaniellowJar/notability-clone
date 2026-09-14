@@ -15,7 +15,9 @@ targets:
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - Sources
+      - path: Sources
+        excludes:
+          - NotabilityCloneTests
     dependencies:
       - package: NotabilityCore
     settings:
