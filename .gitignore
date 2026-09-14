@@ -1,0 +1,25 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+
+# Build outputs
+App/build/
+App/buildtest/
+App/Payload/
+*.ipa
+
+# Environment / secrets (never commit keys)
+.env
+*.env
+.env_backup
+keys.env
+.ocis-rclone.env
+
+# macOS
+.DS_Store

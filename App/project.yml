@@ -1,0 +1,59 @@
+name: NotabilityClone
+options:
+  bundleIdPrefix: com.daniellow
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  NotabilityCore:
+    path: ..
+
+targets:
+  NotabilityClone:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Sources
+    dependencies:
+      - package: NotabilityCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.daniellow.notabilityclone
+        PRODUCT_NAME: NotabilityClone
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.10"
+        TARGETED_DEVICE_FAMILY: "2"
+        CODE_SIGNING_ALLOWED: "NO"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        DEVELOPMENT_ASSET_PATHS: ""
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Notability
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Record audio alongside your notes; it is transcribed to text.
+        NSPhotoLibraryUsageDescription: Insert photos into your notes.
+        NSCameraUsageDescription: Take a photo to insert into your notes, with optional background removal.
+
+  NotabilityCloneTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Sources/NotabilityCloneTests
+    dependencies:
+      - target: NotabilityClone
+        embed: false
+
+schemes:
+  NotabilityClone:
+    build:
+      targets:
+        NotabilityClone: all
+        NotabilityCloneTests: [test]
+    test:
+      targets:
+        - NotabilityCloneTests
