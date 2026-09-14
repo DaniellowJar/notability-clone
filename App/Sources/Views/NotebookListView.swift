@@ -1,3 +1,4 @@
+import NotabilityCore
 import SwiftUI
 
 struct NotebookListView: View {
@@ -9,13 +10,8 @@ struct NotebookListView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 16)], spacing: 16) {
-                    ForEach(app.notebooks) { notebook in
-                        NavigationLink(value: notebook.id) {
-                            NotebookCoverView(notebook: notebook)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                LazyVGrid(columns: Self.gridColumns, spacing: 16) {
+                    notebookGrid
                 }
                 .padding(20)
             }
@@ -38,6 +34,17 @@ struct NotebookListView: View {
                     app.createNotebook(title: title, coverColorHex: color)
                 }
             }
+        }
+    }
+
+    private static let gridColumns = [GridItem(.adaptive(minimum: 180), spacing: 16)]
+
+    private var notebookGrid: some View {
+        ForEach(app.notebooks) { notebook in
+            NavigationLink(value: notebook.id) {
+                NotebookCoverView(notebook: notebook)
+            }
+            .buttonStyle(.plain)
         }
     }
 }
