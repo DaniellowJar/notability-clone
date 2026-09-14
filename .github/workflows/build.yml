@@ -48,9 +48,8 @@ jobs:
       - name: Build unsigned app (device)
         working-directory: App
         run: |
-          xcodebuild -project NotabilityClone.xcodeproj -scheme NotabilityClone \
-            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project NotabilityClone.xcodeproj -target NotabilityClone \
+            -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Unit test on simulator
         working-directory: App
         run: |
