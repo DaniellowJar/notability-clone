@@ -55,7 +55,7 @@ jobs:
         working-directory: App
         run: |
           xcodebuild -project NotabilityClone.xcodeproj -scheme NotabilityClone \
-            -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -configuration Debug -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=latest' \
             -derivedDataPath buildtest CODE_SIGNING_ALLOWED=NO test
       - name: Package unsigned IPA (LiveContainer)
         working-directory: App
