@@ -1,0 +1,42 @@
+# Services
+# rembg           danielgatis/rembg    :7000  (internal, background removal engine)
+# rembg-openai    build .             :19538 OpenAI-compatible /v1/images/edits
+# pix2tex         lukasblecher/pix2tex:api :8502 (internal, LaTeX OCR engine)
+# pix2tex-openai  build .             :19539 /v1/math/ocr wrapper
+
+services:
+  rembg:
+    image: danielgatis/rembg:latest
+    command: ["s", "--host", "0.0.0.0", "--port", "7000", "--log_level", "info"]
+    volumes:
+      - rembg-cache:/root/.u2net
+    restart: unless-stopped
+
+  rembg-openai:
+    build: ./rembg-openai
+    environment:
+      - REMBG_URL=http://rembg:7000
+      - SHIM_API_KEY=${SHIM_API_KEY:-}
+    ports:
+      - "19538:8000"
+    depends_on:
+      - rembg
+    restart: unless-stopped
+
+  pix2tex:
+    image: lukasblecher/pix2tex:api
+    restart: unless-stopped
+
+  pix2tex-openai:
+    build: ./pix2tex-openai
+    environment:
+      - PIX2TEX_URL=http://pix2tex:8502
+      - SHIM_API_KEY=${SHIM_API_KEY:-}
+    ports:
+      - "19539:8000"
+    depends_on:
+      - pix2tex
+    restart: unless-stopped
+
+volumes:
+  rembg-cache:
