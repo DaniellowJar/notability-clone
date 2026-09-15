@@ -102,8 +102,7 @@ final class NotabilityCloneUITests: XCTestCase {
                       "page must persist when re-entering the notebook")
 
         // 7. Swipe-to-delete the created page.
-        app.staticTexts["Page 1"].swipeLeft()
-        app.buttons["Delete"].tap()
+        XCTAssertTrue(deletePage(app, titled: "Page 1"), "swipe should reveal and tap Delete")
         XCTAssertFalse(app.staticTexts["Page 1"].waitForExistence(timeout: 5))
     }
 
@@ -113,6 +112,26 @@ final class NotabilityCloneUITests: XCTestCase {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
         start.press(forDuration: 0.1, thenDragTo: end)
+    }
+
+    /// Swipes a Pages row right-to-left and taps Delete. Retries: the reveal
+    /// animation on a freshly re-entered list can swallow the first gesture.
+    private func deletePage(_ app: XCUIApplication, titled title: String) -> Bool {
+        for _ in 0..<3 {
+            let cell = app.cells.containing(.staticText, identifier: title).firstMatch
+            guard cell.exists else { continue }
+            let start = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+            let end = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            let delete = app.buttons["Delete"].firstMatch
+            if delete.waitForExistence(timeout: 4) {
+                delete.tap()
+                return true
+            }
+        }
+        print("DELETE-missing title=\(title)")
+        print(app.debugDescription)
+        return false
     }
 }
 
