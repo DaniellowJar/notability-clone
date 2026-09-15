@@ -5,7 +5,7 @@ struct NotebookListView: View {
     @Environment(AppStore.self) private var app
     @State private var showingCreate = false
     @State private var errorMessage: String?
-    @State private var path: [AnyHashable] = []
+    @State private var path: [Route] = []
     @State private var pendingCanvasRecord: Record?
 
     private let palette = ["#5B8DEF", "#F0A64A", "#7CC576", "#E06060", "#9B7EDE", "#4AC7C7"]
@@ -30,11 +30,13 @@ struct NotebookListView: View {
                     .accessibilityIdentifier("addNotebook")
                 }
             }
-            .navigationDestination(for: Notebook.self) { notebook in
-                RecordListView(notebookID: notebook.id, path: $path)
-            }
-            .navigationDestination(for: Record.self) { record in
-                RecordCanvasView(record: record)
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .notebook(let notebook):
+                    RecordListView(notebookID: notebook.id, path: $path)
+                case .record(let record):
+                    RecordCanvasView(record: record)
+                }
             }
             .sheet(isPresented: $showingCreate) {
                 CreateNotebookView(palette: palette) { title, color in
@@ -55,7 +57,7 @@ struct NotebookListView: View {
                     // Let the sheet finish dismissing before pushing — path
                     // changes during the dismissal transition get dropped.
                     try? await Task.sleep(for: .milliseconds(450))
-                    path.append(record)
+                    path.append(.record(record))
                 }
             }
             .alert("Error", isPresented: errorAlertBinding) {
@@ -69,7 +71,7 @@ struct NotebookListView: View {
 
     private var notebookGrid: some View {
         ForEach(app.notebooks) { notebook in
-            NavigationLink(value: notebook) {
+            NavigationLink(value: Route.notebook(notebook)) {
                 NotebookCoverView(notebook: notebook)
             }
             .buttonStyle(.plain)

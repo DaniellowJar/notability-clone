@@ -3,7 +3,7 @@ import SwiftUI
 
 struct RecordListView: View {
     let notebookID: UUID
-    @Binding var path: [AnyHashable]
+    @Binding var path: [Route]
 
     @Environment(AppStore.self) private var app
     @State private var records: [Record] = []
@@ -15,7 +15,7 @@ struct RecordListView: View {
     var body: some View {
         List {
             ForEach(records) { record in
-                NavigationLink(value: record) {
+                NavigationLink(value: Route.record(record)) {
                     HStack(spacing: 12) {
                         Image(systemName: "square.stack.3d.up")
                             .foregroundStyle(.tint)
@@ -90,7 +90,7 @@ struct RecordListView: View {
                 // Let the sheet finish dismissing before pushing — path
                 // changes during the dismissal transition get dropped.
                 try? await Task.sleep(for: .milliseconds(450))
-                path.append(record)
+                path.append(.record(record))
             }
         }
         .alert("Error", isPresented: errorAlertBinding) {
