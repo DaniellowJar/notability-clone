@@ -19,13 +19,10 @@ enum PKStrokeConverter {
                 altitude: sample.altitude
             )
         }
-        let ci = stroke.ink.color
-        let color = UIColor(
-            red: CGFloat(ci.red), green: CGFloat(ci.green),
-            blue: CGFloat(ci.blue), alpha: CGFloat(ci.alpha)
-        )
+        // iOS 18 SDK: PKInk.color is a UIColor and PKInk has no width property —
+        // use the stroke's sampled point widths for the base width instead.
         let baseWidth = Double(samples.map { $0.size.width }.max() ?? 3)
-        return StrokeData(points: points, colorHex: color.hexString, baseWidth: baseWidth)
+        return StrokeData(points: points, colorHex: stroke.ink.color.hexString, baseWidth: baseWidth)
     }
 
     static func stroke(from data: StrokeData) -> PKStroke {
@@ -48,7 +45,7 @@ enum PKStrokeConverter {
             )]
         }
         let path = PKStrokePath(controlPoints: samples, creationDate: Date())
-        let ink = PKInk(.pen, color: UIColor(hex: data.colorHex), width: CGFloat(data.baseWidth))
+        let ink = PKInk(.pen, color: UIColor(hex: data.colorHex))
         return PKStroke(ink: ink, path: path)
     }
 
