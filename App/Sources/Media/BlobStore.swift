@@ -1,4 +1,5 @@
 import Foundation
+import NotabilityCore
 
 /// Blob storage under the app's Documents/Media tree. `fileRef` values are
 /// relative paths from Documents (see `BlobNaming`) so backups and Phase 11
