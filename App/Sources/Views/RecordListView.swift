@@ -108,8 +108,8 @@ struct RecordListView: View {
         do {
             records = try app.store.records(in: notebookID)
         } catch {
-            loggerError("reload failed", error)
-            records = []
+            // Never fail silently — an empty list hides real storage errors.
+            errorMessage = "Could not load records: \(error.localizedDescription)"
         }
     }
 
