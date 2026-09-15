@@ -314,6 +314,15 @@ final class DrawingPersistenceTests: XCTestCase {
         XCTAssertEqual(strokes[0].timestamp, t0)
         XCTAssertEqual(strokes[1].timestamp, t0.addingTimeInterval(1))
     }
+
+    func testLatestModifiedAtTracksChanges() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        _ = try store.createRecord(in: nb.id, title: "r")
+        let before = store.latestModifiedAt()
+        try store.renameNotebook(nb.id, title: "New")
+        XCTAssertGreaterThan(store.latestModifiedAt(), before)
+    }
 }
 
 final class StrokeMathTests: XCTestCase {

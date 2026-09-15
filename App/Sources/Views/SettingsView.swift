@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var ownCloudPassword = ""
     @State private var message: String?
     @State private var showKey = false
+    @State private var syncing = false
 
     var body: some View {
         NavigationStack {
@@ -60,10 +61,24 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settingsSave")
                 }
 
+                Section("Sync") {
+                    Button {
+                        Task { await syncNow() }
+                    } label: {
+                        HStack {
+                            Text("Sync with OwnCloud now")
+                            Spacer()
+                            if syncing { ProgressView().controlSize(.small) }
+                        }
+                    }
+                    .disabled(syncing)
+                    .accessibilityIdentifier("syncNow")
+                }
+
                 if let message {
                     Section {
                         Text(message)
-                            .foregroundStyle(message.contains("saved") ? .green : .red)
+                            .foregroundStyle(message.contains("saved") || message.contains("Synced") ? .green : .red)
                     }
                 }
             }
@@ -98,5 +113,17 @@ struct SettingsView: View {
         } catch {
             message = "Could not save: \(error.localizedDescription)"
         }
+    }
+
+    private func syncNow() async {
+        syncing = true
+        let service = SyncService(store: AppStore.shared.store)
+        do {
+            try await service.sync()
+            message = "Synced with OwnCloud."
+        } catch {
+            message = "Sync failed: \(error.localizedDescription)"
+        }
+        syncing = false
     }
 }

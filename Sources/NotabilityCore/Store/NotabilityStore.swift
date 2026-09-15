@@ -194,6 +194,21 @@ public final class NotabilityStore: @unchecked Sendable {
         }
     }
 
+    /// Latest modification time across the store — the LWW timestamp used when
+    /// syncing a whole backup snapshot.
+    public func latestModifiedAt() -> Date {
+        (try? writer.read { db in
+            let raw = try Double.fetchOne(db, sql: """
+                SELECT MAX(m) FROM (
+                    SELECT MAX(modifiedAt) AS m FROM notebook
+                    UNION ALL SELECT MAX(modifiedAt) FROM record
+                    UNION ALL SELECT MAX(modifiedAt) FROM canvasBlock
+                )
+                """)
+            return raw.map(Date.init(timeIntervalSinceReferenceDate:)) ?? Date(timeIntervalSinceReferenceDate: 0)
+        }) ?? Date(timeIntervalSinceReferenceDate: 0)
+    }
+
     /// `.stroke` blocks in capture order (timestamp then zIndex) — how the
     /// custom renderer reconstructs a record's ink, and how undo truncates.
     public func strokeBlocks(in recordId: UUID) throws -> [CanvasBlock] {

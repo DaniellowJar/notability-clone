@@ -19,8 +19,8 @@ final class Phase8_13Tests: XCTestCase {
         try store.deleteSecret(for: "deepinfra")
         XCTAssertNil(store.secret(for: "deepinfra"))
 
-        let disk = try String(contentsOf: dir.appendingPathComponent("secrets.bin"), encoding: .utf8)
-        XCTAssertFalse(disk.contains("sk-supersecret"), "plaintext must never be written to disk")
+        let disk = try Data(contentsOf: dir.appendingPathComponent("secrets.bin"))
+        XCTAssertFalse(disk.contains(Data("sk-supersecret".utf8)), "plaintext must never be written to disk")
         try? FileManager.default.removeItem(at: dir)
     }
 
