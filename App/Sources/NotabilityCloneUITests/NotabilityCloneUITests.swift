@@ -114,6 +114,51 @@ final class NotabilityCloneUITests: XCTestCase {
         start.press(forDuration: 0.1, thenDragTo: end)
     }
 
+    func testCreateTextBlockViaMarqueeAndPersist() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore"]
+        app.launch()
+
+        // Notebook → New Page → canvas.
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
+        let notebookField = app.textFields["notebookTitle"]
+        notebookField.tap()
+        notebookField.typeText("Blocks")
+        app.buttons["createNotebook"].tap()
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8))
+        app.buttons["addPage"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Blocks"))
+
+        // 1. Text tool → drag a marquee → a text block is created and focused.
+        app.buttons["toolText"].tap()
+        let marqueeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.35))
+        let marqueeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.45))
+        marqueeStart.press(forDuration: 0.05, thenDragTo: marqueeEnd)
+        XCTAssertTrue(app.waitForDebug(label: "blocks=1", timeout: 5),
+                      "marquee should create a text block")
+
+        // 2. Type into the focused text block.
+        if app.keyboards.firstMatch.waitForExistence(timeout: 6) {
+            app.typeText("Hello block")
+        } else {
+            app.typeText("Hello block")
+        }
+
+        // 3. Done → block stays, editable as static text.
+        app.buttons["toolDone"].tap()
+        XCTAssertTrue(app.waitForDebug(label: "blocks=1", timeout: 5))
+
+        // 4. Leave and re-enter: the block persists.
+        app.navigationBars.firstMatch.buttons["Blocks"].tap()
+        XCTAssertTrue(app.staticTexts["Page 1"].waitForExistence(timeout: 5))
+        app.staticTexts["Page 1"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Blocks"))
+        XCTAssertTrue(app.waitForDebug(label: "blocks=1", timeout: 5),
+                      "text block must persist across re-entry")
+    }
+
     /// Reveals the row's Delete action and taps it. A short right-to-left drag
     /// is used on purpose: a full-row swipe triggers iOS's full-swipe delete,
     /// which removes the row without a Delete button ever appearing (and this

@@ -2,40 +2,87 @@ import NotabilityCore
 import PencilKit
 import SwiftUI
 
-/// Phase 1 bare canvas: a plain PKCanvasView with the tool picker and drawing
-/// enabled. Strokes are persisted per-record as a `PKDrawing` blob so they
-/// survive leaving the screen / app relaunch.
-/// Phase 3 replaces this with a capture-only subclass + custom renderer.
+/// Phase 2 canvas: ink (PKCanvasView) with SwiftUI blocks overlaid, driven by
+/// a `CanvasMode`. Strokes persist as a per-record PKDrawing blob; blocks
+/// persist as canvasBlock rows. Mode routing guarantees ink, block gestures,
+/// and the selection/placement overlay never fight over a touch.
+/// Phase 3 replaces the blob ink with a capture-only subclass + custom renderer.
 struct RecordCanvasView: View {
     let record: Record
 
     @Environment(AppStore.self) private var app
     @State private var visibleStrokes = 0
     @State private var savedStrokes = -1
+    @State private var session = CanvasSessionState()
 
     var body: some View {
-        PKCanvasContainer(
-            recordID: record.id,
-            store: app.store,
-            onStateChange: { strokes, saved in
-                visibleStrokes = strokes
-                savedStrokes = saved
+        GeometryReader { _ in
+            ZStack(alignment: .topLeading) {
+                PKCanvasContainer(
+                    recordID: record.id,
+                    store: app.store,
+                    onStateChange: { strokes, saved in
+                        visibleStrokes = strokes
+                        savedStrokes = saved
+                    }
+                )
+                .allowsHitTesting(session.mode.allowsInkHitTesting)
+
+                CanvasBlockLayer(session: session)
+                    .allowsHitTesting(session.mode.allowsBlockHitTesting)
+
+                captureOverlay
             }
-        )
+        }
         .ignoresSafeArea(edges: .bottom)
         .navigationTitle(record.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .bottomBar)
+        .overlay(alignment: .top) {
+            CanvasToolbarView(session: session)
+        }
         #if DEBUG
-        .safeAreaInset(edge: .top) {
-            Text("strokes=\(visibleStrokes) saved=\(savedStrokes)")
+        .overlay(alignment: .topLeading) {
+            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
                 .accessibilityIdentifier("canvasDebug")
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
+                .padding(.top, 52)
         }
         #endif
+        .onAppear {
+            session.load(recordID: record.id, store: app.store)
+        }
+        .onDisappear {
+            session.flushPendingSaves()
+        }
+        .alert("Error", isPresented: errorAlertBinding) {
+        } message: {
+            Text(session.errorMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var captureOverlay: some View {
+        switch session.mode {
+        case .areaSelect(let intent):
+            MarqueeOverlay(session: session, intent: intent)
+        case .tapToPlace(let intent):
+            PlaceOverlay(session: session, intent: intent)
+        case .editingBlock:
+            DeselectOverlay(session: session)
+        case .draw:
+            EmptyView()
+        }
+    }
+
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { session.errorMessage != nil },
+            set: { if !$0 { session.errorMessage = nil } }
+        )
     }
 }
 
