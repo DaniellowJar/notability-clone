@@ -73,6 +73,16 @@ struct RecordListView: View {
             .presentationDetents([.medium])
         }
         .onAppear(perform: reload)
+        #if DEBUG
+        .safeAreaInset(edge: .top) {
+            Text("records=\(records.count) nb=\(notebookID.uuidString)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .accessibilityIdentifier("recordListDebug")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+        }
+        #endif
         .onChange(of: showingCreate) { _, dismissed in
             guard !dismissed, let record = pendingCanvasRecord else { return }
             pendingCanvasRecord = nil

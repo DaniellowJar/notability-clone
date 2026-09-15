@@ -43,8 +43,9 @@ final class NotabilityCloneUITests: XCTestCase {
         // 3. Open it: the auto-created record must be in the list.
         app.staticTexts["TestNB"].tap()
         let bar = app.navigationBars.firstMatch
-        print("PROBE2 barExists=\(bar.exists) navBtns=\(bar.buttons.count) btnLabels=[\(bar.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|"))] cells=\(app.cells.count)")
-        print("PROBE2 texts=[\(app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | "))]")
+        print("PROBE2 bar=\(bar.exists) navBtns=\(bar.buttons.count) btnLabels=[\(bar.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|"))] addRecord=\(app.buttons["addRecord"].exists) cells=\(app.cells.count) texts=[\(app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | "))]")
+        XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 5),
+                      "auto-created record must appear in the records list")
         XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 5),
                       "auto-created record must appear in the records list")
 
