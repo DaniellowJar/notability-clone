@@ -1,8 +1,9 @@
 import XCTest
 
-/// Reproduces the reported defect end to end: create notebook → land on a
-/// canvas, create a record → land on its canvas, both visible in the list,
-/// and deletable. Runs against an in-memory store on the iPad simulator.
+/// Reproduces the reported defect end to end: create notebook → land on its
+/// Pages screen, open a page → its canvas, tap New Page → creates and opens a
+/// fresh canvas, both pages listed and deletable. Runs against an in-memory
+/// store on the iPad simulator.
 ///
 /// iOS 26.2 simulator probe results (2025-09):
 /// - `navigationBars["Untitled"]` is NOT exposed for inline nav titles.
@@ -50,55 +51,48 @@ final class NotabilityCloneUITests: XCTestCase {
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
 
-        // The create sheet must dismiss and the record list must push — not
+        // The create sheet must dismiss and the Pages screen must push — not
         // straight into a blank canvas with nothing to tap.
         XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
                        "create sheet should dismiss after tapping Create")
         XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
-        XCTAssertTrue(app.buttons["addRecord"].waitForExistence(timeout: 8),
-                      "creating a notebook should open its record list")
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8),
+                      "creating a notebook should open its Pages screen with a New Page button")
 
-        // 2. The auto-created record is listed.
+        // 2. The auto-created page is listed.
         XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 8),
-                      "auto-created record must appear in the records list")
+                      "auto-created page must appear in the Pages list")
 
-        // 3. Open it → canvas; back returns to the list.
+        // 3. Open it → canvas; back returns to Pages.
         app.staticTexts["Untitled"].tap()
         XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
-                      "tapping a record should push its canvas")
+                      "tapping a page should push its canvas")
         app.navigationBars.firstMatch.buttons["TestNB"].tap()
-        XCTAssertTrue(app.buttons["addRecord"].waitForExistence(timeout: 5),
-                      "backing out of a canvas should return to the record list")
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 5),
+                      "backing out of a canvas should return to Pages")
 
-        // 4. Create a named record → straight to its canvas.
-        app.buttons["addRecord"].tap()
-        let recordField = app.textFields["recordTitle"]
-        XCTAssertTrue(recordField.waitForExistence(timeout: 8), "record title field should appear")
-        recordField.tap()
-        recordField.typeText("TestRec")
-        app.buttons["createRecord"].tap()
-        XCTAssertFalse(app.textFields["recordTitle"].waitForExistence(timeout: 5),
-                       "create-record sheet should dismiss after tapping Create")
+        // 4. One-tap New Page → creates and opens its canvas directly.
+        app.buttons["addPage"].tap()
         XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
-                      "creating a record should push its canvas")
+                      "tapping New Page should create a page and open its canvas")
 
-        // 5. Back: both records are listed.
+        // 5. Back: both pages are listed.
         app.navigationBars.firstMatch.buttons["TestNB"].tap()
-        XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Page 2"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Untitled"].exists)
 
-        // 6. Record persists after leaving the notebook and re-entering.
+        // 6. Page persists after leaving the notebook and re-entering.
         app.navigationBars.firstMatch.buttons["Notability"].tap()
         XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 8),
                       "notebook should be visible in the grid")
         app.staticTexts["TestNB"].tap()
-        XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 8),
-                      "record must persist when re-entering the notebook")
+        XCTAssertTrue(app.staticTexts["Page 2"].waitForExistence(timeout: 8),
+                      "page must persist when re-entering the notebook")
 
-        // 7. Swipe-to-delete the named record.
-        app.staticTexts["TestRec"].swipeLeft()
+        // 7. Swipe-to-delete the created page.
+        app.staticTexts["Page 2"].swipeLeft()
         app.buttons["Delete"].tap()
-        XCTAssertFalse(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Page 2"].waitForExistence(timeout: 5))
     }
 }
 

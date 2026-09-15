@@ -33,7 +33,7 @@ struct NotebookListView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .notebook(let notebook):
-                    RecordListView(notebookID: notebook.id, path: $path)
+                    NotebookPagesView(notebookID: notebook.id, path: $path)
                 case .record(let record):
                     RecordCanvasView(record: record)
                 }
