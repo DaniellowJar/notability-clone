@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import NotabilityCore
 
 /// Records 16 kHz mono 16-bit PCM WAV chunks (the format DeepInfra Whisper
 /// accepts) with AVAudioRecorder. Each chunk calls `onChunkRecorded` with its

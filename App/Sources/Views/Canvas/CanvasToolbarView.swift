@@ -101,29 +101,34 @@ struct CanvasToolbarView: View {
                 session.deleteBlock(blockID)
             }
             if let block = session.blocks.first(where: { $0.id == blockID }) {
-                switch block.payload {
-                case .text:
-                    Divider().frame(height: 20)
-                    FontSizeStepper(
-                        value: block.textPayload?.fontSize ?? TextBlockLayout.defaultFontSize
-                    ) { size in
-                        session.setTextFontSize(blockID, size: size)
-                    }
-                case .pdfPage:
-                    Divider().frame(height: 20)
-                    ToolButton(systemImage: "doc.richtext", id: "extractPDF") {
-                        onExtractPDF(blockID)
-                    }
-                case .image:
-                    Divider().frame(height: 20)
-                    ToolButton(systemImage: "wand.and.stars", id: "removeBackground") {
-                        onRemoveBackground(blockID)
-                    }
-                default:
-                    break
-                }
+                contextContent(for: block, blockID: blockID)
             }
             ToolButton(title: "Done", id: "toolDone") { session.deselect() }
+        }
+    }
+
+    @ViewBuilder
+    private func contextContent(for block: CanvasBlock, blockID: UUID) -> some View {
+        switch block.payload {
+        case .text:
+            Divider().frame(height: 20)
+            FontSizeStepper(
+                value: block.textPayload?.fontSize ?? TextBlockLayout.defaultFontSize
+            ) { size in
+                session.setTextFontSize(blockID, size: size)
+            }
+        case .pdfPage:
+            Divider().frame(height: 20)
+            ToolButton(systemImage: "doc.richtext", id: "extractPDF") {
+                onExtractPDF(blockID)
+            }
+        case .image:
+            Divider().frame(height: 20)
+            ToolButton(systemImage: "wand.and.stars", id: "removeBackground") {
+                onRemoveBackground(blockID)
+            }
+        default:
+            EmptyView()
         }
     }
 
