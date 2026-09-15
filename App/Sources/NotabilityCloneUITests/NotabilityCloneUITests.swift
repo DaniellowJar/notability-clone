@@ -114,20 +114,24 @@ final class NotabilityCloneUITests: XCTestCase {
         start.press(forDuration: 0.1, thenDragTo: end)
     }
 
-    /// Swipes a Pages row right-to-left and taps Delete. Retries: the reveal
-    /// animation on a freshly re-entered list can swallow the first gesture.
+    /// Reveals the row's Delete action and taps it. A short right-to-left drag
+    /// is used on purpose: a full-row swipe triggers iOS's full-swipe delete,
+    /// which removes the row without a Delete button ever appearing (and this
+    /// List holds only one page, so a full swipe is easy to trigger). Either
+    /// outcome is a successful deletion.
     private func deletePage(_ app: XCUIApplication, titled title: String) -> Bool {
         for _ in 0..<3 {
             let cell = app.cells.containing(.staticText, identifier: title).firstMatch
-            guard cell.exists else { continue }
-            let start = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
-            let end = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
-            start.press(forDuration: 0.05, thenDragTo: end)
+            guard cell.exists else { return true } // already gone (full-swipe delete)
+            let start = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+            let end = cell.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: end)
             let delete = app.buttons["Delete"].firstMatch
-            if delete.waitForExistence(timeout: 4) {
+            if delete.waitForExistence(timeout: 3) {
                 delete.tap()
                 return true
             }
+            if !cell.waitForExistence(timeout: 1) { return true } // full-swipe delete
         }
         print("DELETE-missing title=\(title)")
         print(app.debugDescription)
