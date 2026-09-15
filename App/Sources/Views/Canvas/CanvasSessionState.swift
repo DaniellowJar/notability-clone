@@ -32,7 +32,9 @@ final class CanvasSessionState {
     func reload() {
         guard let recordID, let store else { return }
         do {
-            blocks = try store.blocks(in: recordID)
+            // Ink strokes are `.stroke` blocks rendered by the custom ink layer;
+            // this session drives the block overlay, so exclude them.
+            blocks = try store.blocks(in: recordID).filter { $0.kind != .stroke }
         } catch {
             errorMessage = "Could not load blocks: \(error.localizedDescription)"
         }

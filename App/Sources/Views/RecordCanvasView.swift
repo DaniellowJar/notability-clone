@@ -2,11 +2,11 @@ import NotabilityCore
 import PencilKit
 import SwiftUI
 
-/// Phase 2 canvas: ink (PKCanvasView) with SwiftUI blocks overlaid, driven by
-/// a `CanvasMode`. Strokes persist as a per-record PKDrawing blob; blocks
-/// persist as canvasBlock rows. Mode routing guarantees ink, block gestures,
-/// and the selection/placement overlay never fight over a touch.
-/// Phase 3 replaces the blob ink with a capture-only subclass + custom renderer.
+/// Phase 3 canvas: PKCanvasView is the input-capture layer only. Completed
+/// strokes are converted to `StrokeData`, persisted as `.stroke` blocks, and
+/// drawn by the custom renderer on an opaque ink view that hides the canvas's
+/// own ink. Blocks (text/image/PDF) overlay the ink; a `CanvasMode` routes
+/// touches so ink, blocks, and the selection/placement overlay never fight.
 struct RecordCanvasView: View {
     let record: Record
 
@@ -14,6 +14,7 @@ struct RecordCanvasView: View {
     @State private var visibleStrokes = 0
     @State private var savedStrokes = -1
     @State private var session = CanvasSessionState()
+    @State private var inkStore = InkStrokeStore()
 
     var body: some View {
         GeometryReader { _ in
@@ -21,6 +22,7 @@ struct RecordCanvasView: View {
                 PKCanvasContainer(
                     recordID: record.id,
                     store: app.store,
+                    inkStore: inkStore,
                     onStateChange: { strokes, saved in
                         visibleStrokes = strokes
                         savedStrokes = saved
@@ -28,10 +30,13 @@ struct RecordCanvasView: View {
                 )
                 .allowsHitTesting(session.mode.allowsInkHitTesting)
 
-                CanvasBlockLayer(session: session)
-                    .allowsHitTesting(session.mode.allowsBlockHitTesting)
+                InkRenderView(strokes: inkStore.strokes)
+                    .allowsHitTesting(false)
 
                 captureOverlay
+
+                CanvasBlockLayer(session: session)
+                    .allowsHitTesting(session.mode.allowsBlockHitTesting)
             }
         }
         .ignoresSafeArea(edges: .bottom)
@@ -89,6 +94,7 @@ struct RecordCanvasView: View {
 private struct PKCanvasContainer: UIViewRepresentable {
     let recordID: UUID
     let store: NotabilityStore
+    let inkStore: InkStrokeStore
     /// (visibleStrokes, savedStrokes) reported from the coordinator.
     let onStateChange: (Int, Int) -> Void
 
@@ -111,7 +117,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
             if lock { canvas?.drawingPolicy = .pencilOnly }
         }
         context.coordinator.onStateChange = onStateChange
-        context.coordinator.loadDrawing(into: canvas, store: store, recordID: recordID)
+        context.coordinator.loadDrawing(into: canvas, store: store, recordID: recordID, inkStore: inkStore)
         context.coordinator.attach(to: canvas)
         return canvas
     }
@@ -122,10 +128,10 @@ private struct PKCanvasContainer: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    /// Owns the shared `PKToolPicker`, loads the persisted drawing on entry,
-    /// and writes `drawing.dataRepresentation()` back to the store as the user
-    /// draws. Saving is debounced for continuous strokes and flushed whenever
-    /// the user lifts the tool.
+    /// Capture coordinator: migrates any legacy drawing blob, loads existing
+    /// stroke blocks as the renderer baseline, diffs newly completed strokes,
+    /// and persists each as a `.stroke` block. Native ink is hidden beneath the
+    /// opaque ink view, so this is the single source of truth for the renderer.
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var onStateChange: ((Int, Int) -> Void)?
 
@@ -133,22 +139,28 @@ private struct PKCanvasContainer: UIViewRepresentable {
         private weak var canvas: PKCanvasView?
         private var recordID: UUID?
         private var store: NotabilityStore?
-        private var saveWorkItem: DispatchWorkItem?
-        private var lastSavedStrokeCount = -1
+        private var inkStore: InkStrokeStore?
+        private var capturedCount = 0
 
-        func loadDrawing(into canvas: PKCanvasView, store: NotabilityStore, recordID: UUID) {
+        func loadDrawing(into canvas: PKCanvasView, store: NotabilityStore, recordID: UUID, inkStore: InkStrokeStore) {
             self.canvas = canvas
             self.store = store
             self.recordID = recordID
+            self.inkStore = inkStore
 
-            if let data = try? store.drawingData(for: recordID),
-               let drawing = try? PKDrawing(data: data) {
-                canvas.drawing = drawing
-                lastSavedStrokeCount = drawing.strokes.count
-            } else {
-                lastSavedStrokeCount = 0
+            DrawingMigrator.migrateIfNeeded(recordID: recordID, store: store)
+
+            let strokeBlocks = (try? store.strokeBlocks(in: recordID)) ?? []
+            let strokes = strokeBlocks.compactMap { block -> StrokeData? in
+                guard case .stroke(let list, _, _) = block.payload, let first = list.first else { return nil }
+                return first
             }
-            onStateChange?(canvas.drawing.strokes.count, lastSavedStrokeCount)
+            inkStore.load(strokes)
+            capturedCount = strokes.count
+            // Rebuild the canvas's own drawing so its stroke count matches our
+            // capture (baseline for diff + undo). Hidden beneath the ink view.
+            canvas.drawing = PKStrokeConverter.drawing(from: strokes)
+            onStateChange?(canvas.drawing.strokes.count, capturedCount)
         }
 
         func attach(to canvas: PKCanvasView) {
@@ -163,31 +175,42 @@ private struct PKCanvasContainer: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            let count = canvasView.drawing.strokes.count
-            onStateChange?(count, lastSavedStrokeCount)
-            scheduleSave(for: canvasView.drawing)
+            guard let inkStore else { return }
+            let all = canvasView.drawing.strokes
+            if all.count > capturedCount {
+                let newStrokes = all[capturedCount...].map(PKStrokeConverter.strokeData)
+                inkStore.append(newStrokes)
+                persist(added: newStrokes)
+                capturedCount = all.count
+            } else if all.count < capturedCount {
+                let removedCount = capturedCount - all.count
+                inkStore.truncate(to: all.count)
+                removeLastStrokeBlocks(removedCount)
+                capturedCount = all.count
+            }
+            onStateChange?(all.count, capturedCount)
         }
 
-        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-            saveNow(for: canvasView.drawing)
+        private func persist(added strokes: [StrokeData]) {
+            guard let store, let recordID else { return }
+            for stroke in strokes {
+                do {
+                    try store.addBlock(
+                        in: recordID, kind: .stroke,
+                        frame: stroke.bounds,
+                        payload: .stroke([stroke], recognizedText: "", corrected: false)
+                    )
+                } catch {
+                    // Keep the ink in the renderer even if a write fails.
+                }
+            }
         }
 
-        private func scheduleSave(for drawing: PKDrawing) {
-            saveWorkItem?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.saveNow(for: drawing) }
-            saveWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-        }
-
-        private func saveNow(for drawing: PKDrawing) {
-            saveWorkItem?.cancel()
-            guard let recordID, let store else { return }
-            do {
-                try store.saveDrawingData(drawing.dataRepresentation(), for: recordID)
-                lastSavedStrokeCount = drawing.strokes.count
-                onStateChange?(drawing.strokes.count, lastSavedStrokeCount)
-            } catch {
-                // Leave lastSavedStrokeCount unchanged so the debug label stays honest.
+        private func removeLastStrokeBlocks(_ count: Int) {
+            guard let store, let recordID, count > 0 else { return }
+            let strokeBlocks = (try? store.strokeBlocks(in: recordID)) ?? []
+            for block in strokeBlocks.suffix(count) {
+                try? store.deleteBlock(block.id)
             }
         }
     }
@@ -195,7 +218,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
 
 /// PKCanvasView subclass that detects the first Apple Pencil touch so the
 /// canvas can switch from `.anyInput` to `.pencilOnly` (touch painting off).
-/// Phase 3 grows this into the capture-only canvas the custom renderer reads.
+/// Phase 3 uses it as the capture-only canvas.
 private final class CaptureCanvasView: PKCanvasView {
     var onPencilFirstUse: (() -> Void)?
     private var pencilSeen = false

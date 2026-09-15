@@ -186,6 +186,27 @@ public final class NotabilityStore: @unchecked Sendable {
         }
     }
 
+    /// Clears a record's legacy drawing blob after it has been migrated to
+    /// `.stroke` blocks.
+    public func clearDrawingData(for recordId: UUID) throws {
+        try writer.write { db in
+            try db.execute(sql: "UPDATE record SET drawingData = NULL WHERE id = ?", arguments: [recordId.uuidString])
+        }
+    }
+
+    /// `.stroke` blocks in capture order (timestamp then zIndex) — how the
+    /// custom renderer reconstructs a record's ink, and how undo truncates.
+    public func strokeBlocks(in recordId: UUID) throws -> [CanvasBlock] {
+        try writer.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM canvasBlock WHERE recordId = ? AND kind = 'stroke' ORDER BY timestamp, zIndex",
+                arguments: [recordId.uuidString]
+            )
+            return rows.map(Self.decodeBlock)
+        }
+    }
+
     // MARK: - Blocks
 
     public func addBlock(

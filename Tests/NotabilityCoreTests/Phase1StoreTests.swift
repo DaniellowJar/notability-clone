@@ -286,6 +286,32 @@ final class DrawingPersistenceTests: XCTestCase {
         try store.deleteRecord(rec.id)
         XCTAssertNil(try store.drawingData(for: rec.id))
     }
+
+    func testClearDrawingData() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+        try store.saveDrawingData(Data([1, 2]), for: rec.id)
+        try store.clearDrawingData(for: rec.id)
+        XCTAssertNil(try store.drawingData(for: rec.id))
+    }
+
+    func testStrokeBlocksReturnedInCaptureOrder() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+        let t0 = Date(timeIntervalSince1970: 100)
+        let stroke = StrokeData(points: [StrokePoint(location: Point(x: 0, y: 0), timestampOffset: 0, width: 2, force: 1, azimuth: 0, altitude: 45)], colorHex: "#000", baseWidth: 2)
+        _ = try store.addBlock(in: rec.id, kind: .stroke, frame: .zero, payload: .stroke([stroke], recognizedText: "", corrected: false), at: t0)
+        _ = try store.addBlock(in: rec.id, kind: .stroke, frame: .zero, payload: .stroke([stroke], recognizedText: "", corrected: false), at: t0.addingTimeInterval(1))
+        _ = try store.addBlock(in: rec.id, kind: .text, frame: .zero, payload: .text(TextBlockPayload(text: "x")), at: t0.addingTimeInterval(0.5))
+
+        let strokes = try store.strokeBlocks(in: rec.id)
+        XCTAssertEqual(strokes.count, 2)
+        XCTAssertTrue(strokes.allSatisfy { $0.kind == .stroke })
+        XCTAssertEqual(strokes[0].timestamp, t0)
+        XCTAssertEqual(strokes[1].timestamp, t0.addingTimeInterval(1))
+    }
 }
 
 final class StrokeMathTests: XCTestCase {
