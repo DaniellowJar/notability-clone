@@ -10,6 +10,7 @@ final class CanvasSessionState {
     var blocks: [CanvasBlock] = []
     var marquee: Rect?
     var errorMessage: String?
+    var letterMode = false
 
     private(set) var recordID: UUID?
     private(set) var store: NotabilityStore?
@@ -79,6 +80,16 @@ final class CanvasSessionState {
         mode = .tapToPlace(.pdf)
     }
 
+    func startPlaceCalc() {
+        pendingRef = nil
+        pendingThumbRef = nil
+        mode = .tapToPlace(.calc)
+    }
+
+    func toggleLetterMode() {
+        letterMode.toggle()
+    }
+
     func cancelTool() {
         mode = .draw
         marquee = nil
@@ -118,15 +129,22 @@ final class CanvasSessionState {
     // MARK: - Placement
 
     func place(intent: PlacementIntent, at point: Point) {
-        guard let ref = pendingRef else {
-            mode = .draw
-            return
-        }
         switch intent {
-        case .image:
-            insertImageBlock(ref: ref, at: point)
-        case .pdf:
-            insertPDFBlock(ref: ref, thumbRef: pendingThumbRef ?? "", at: point)
+        case .image, .pdf:
+            guard let ref = pendingRef else {
+                mode = .draw
+                return
+            }
+            switch intent {
+            case .image:
+                insertImageBlock(ref: ref, at: point)
+            case .pdf:
+                insertPDFBlock(ref: ref, thumbRef: pendingThumbRef ?? "", at: point)
+            case .calc:
+                break
+            }
+        case .calc:
+            insertCalcBlock(at: point)
         }
     }
 
@@ -183,6 +201,66 @@ final class CanvasSessionState {
         } catch {
             errorMessage = "Could not insert PDF: \(error.localizedDescription)"
         }
+    }
+
+    func insertCalcBlock(at point: Point) {
+        guard let store, let recordID else { return }
+        let size = Size(width: 220, height: 110)
+        let frame = Rect(
+            x: max(0, point.x - size.width / 2),
+            y: max(0, point.y - size.height / 2),
+            width: size.width, height: size.height
+        )
+        do {
+            _ = try store.addBlock(
+                in: recordID, kind: .calc, frame: frame,
+                payload: .calc(CalcBlockPayload(expression: "", result: "", isEditable: true))
+            )
+            blocks = try store.blocks(in: recordID)
+            cancelTool()
+        } catch {
+            errorMessage = "Could not add calculator: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Calculator
+
+    /// Evaluates locally when possible; returns nil when the expression needs AI.
+    func evaluate(_ expression: String) -> String? {
+        let trimmed = expression.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return "" }
+        do {
+            let value = try ExpressionEvaluator.evaluate(trimmed)
+            return format(value)
+        } catch {
+            return nil
+        }
+    }
+
+    func setCalcExpression(_ id: UUID, expression: String) {
+        guard let idx = blocks.firstIndex(where: { $0.id == id }),
+              case .calc(var payload) = blocks[idx].payload else { return }
+        payload.expression = expression
+        if let result = evaluate(expression) {
+            payload.result = result
+        }
+        blocks[idx] = withPayload(.calc(payload), at: idx)
+        scheduleTextSave(id: id, payload: .calc(payload))
+    }
+
+    func setCalcResult(_ id: UUID, result: String) {
+        guard let idx = blocks.firstIndex(where: { $0.id == id }),
+              case .calc(var payload) = blocks[idx].payload else { return }
+        payload.result = result
+        blocks[idx] = withPayload(.calc(payload), at: idx)
+        scheduleTextSave(id: id, payload: .calc(payload))
+    }
+
+    private func format(_ value: Double) -> String {
+        if value.rounded() == value, abs(value) < 1e15 {
+            return String(Int(value))
+        }
+        return String(value)
     }
 
     func selectBlock(_ id: UUID) {
@@ -302,5 +380,11 @@ extension CanvasBlock {
     }
     var pdfThumbRef: String? {
         if case .pdfPage(let p) = payload { p.renderedImageRef.isEmpty ? nil : p.renderedImageRef } else { nil }
+    }
+    var calcExpression: String? {
+        if case .calc(let p) = payload { p.expression } else { nil }
+    }
+    var calcResult: String? {
+        if case .calc(let p) = payload { p.result } else { nil }
     }
 }

@@ -11,7 +11,7 @@ final class Phase3RenderingTests: XCTestCase {
             force: 1, azimuth: 0, altitude: 90
         )
         let path = PKStrokePath(controlPoints: [point], creationDate: Date())
-        let ink = PKInk(.pen, color: .black, width: 3)
+        let ink = PKInk(.pen, color: .black)
         return PKDrawing(strokes: [PKStroke(ink: ink, path: path)])
     }
 

@@ -62,6 +62,8 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "camera", id: "toolCamera") { openCamera() }
             ToolButton(systemImage: "doc", id: "toolPDF") { showImporter = true }
             ToolButton(systemImage: "lasso", id: "toolSelect") { session.startSelectTool() }
+            ToolButton(systemImage: "function", id: "toolCalc") { session.startPlaceCalc() }
+            ToolButton(systemImage: "textformat.size", id: "toolLetter") { session.toggleLetterMode() }
         }
         .onChange(of: photosItem) { _, item in
             guard let item else { return }
@@ -115,6 +117,7 @@ struct CanvasToolbarView: View {
         case .areaSelect(.selectBlocks): "Drag or tap to select a block"
         case .tapToPlace(.image): "Tap the canvas to place the image"
         case .tapToPlace(.pdf): "Tap the canvas to place the PDF"
+        case .tapToPlace(.calc): "Tap the canvas to place the calculator"
         case .editingBlock: "Tap a block to select · drag to move · Done to finish"
         }
     }

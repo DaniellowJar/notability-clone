@@ -18,7 +18,7 @@ struct RecordCanvasView: View {
     @State private var recognitionService: StrokeRecognitionService?
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
                 PKCanvasContainer(
                     recordID: record.id,
@@ -32,13 +32,19 @@ struct RecordCanvasView: View {
                 )
                 .allowsHitTesting(session.mode.allowsInkHitTesting)
 
-                InkRenderView(strokes: inkStore.strokes)
+                InkRenderView(strokes: inkStore.strokes, style: session.letterMode ? .letterMode : .normal)
                     .allowsHitTesting(false)
 
                 captureOverlay
 
                 CanvasBlockLayer(session: session)
                     .allowsHitTesting(session.mode.allowsBlockHitTesting)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if session.letterMode {
+                    LetterModeIndicatorView(strokes: inkStore.strokes, canvasWidth: proxy.size.width)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .ignoresSafeArea(edges: .bottom)

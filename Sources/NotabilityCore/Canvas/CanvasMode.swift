@@ -20,6 +20,7 @@ public enum SelectionIntent: Equatable, Sendable {
 public enum PlacementIntent: Equatable, Sendable {
     case image
     case pdf
+    case calc
 }
 
 extension CanvasMode {

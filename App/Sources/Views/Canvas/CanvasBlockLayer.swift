@@ -62,6 +62,8 @@ private struct CanvasBlockView: View {
             ImageBlockView(block: block)
         case .pdfPage:
             PDFBlockView(block: block)
+        case .calc:
+            CalcBlockView(session: session, block: block)
         default:
             EmptyView()
         }
