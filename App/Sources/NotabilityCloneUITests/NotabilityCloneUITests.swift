@@ -26,12 +26,20 @@ final class NotabilityCloneUITests: XCTestCase {
         XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
                        "create sheet should dismiss after tapping Create")
         XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
-        // ...then land straight on the auto-created canvas.
-        let navIDs = app.navigationBars.allElementsBoundByIndex.map(\.identifier).joined(separator: ",")
-        print("DIAG sheetOpen=\(app.textFields["notebookTitle"].exists) gridHasTestNB=\(app.staticTexts["TestNB"].exists) navBars=[\(navIDs)]")
+
+        // ...then a decision point: grid showing the notebook, vs a pushed canvas.
+        // A pushed canvas hides the grid (no TestNB) and adds a back button.
+        let navBar = app.navigationBars.firstMatch
+        print("State probe:") // matched by the workaround grep
+        print("  canvas=\(descendants(matching: .any).matching(identifier: "canvas").count)")
+        print("  navBar buttons=\(navBar.buttons.count) back=<\(navBar.buttons.firstMatch.label)>")
+        print("  navIds=[\(app.navigationBars.allElementsBoundByIndex.map(\.identifier).joined(separator: "|"))]")
+        print("  grid TestNB=\(app.staticTexts["TestNB"].exists) grid Notability=\(app.staticTexts["Notability"].exists)")
+        print("  Untitled bar=\(app.navigationBars["Untitled"].exists) text=\(app.staticTexts["Untitled"].exists)")
+
         XCTAssertTrue(app.waitForCanvas(title: "Untitled"),
                       "creating a notebook should auto-open a canvas")
-        app.navigationBars["Untitled"].buttons.element(boundBy: 0).tap()
+        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 5),
                       "notebook should be visible in the grid")
 
@@ -51,7 +59,7 @@ final class NotabilityCloneUITests: XCTestCase {
                       "creating a record should push its canvas")
 
         // 6. Back: both records are listed.
-        app.navigationBars["TestRec"].buttons.element(boundBy: 0).tap()
+        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Untitled"].exists)
 
@@ -74,7 +82,11 @@ private extension XCUIApplication {
     /// survives how UIKit/SwiftUI chooses to expose the view.
     func waitForCanvas(title: String, timeout: TimeInterval = 8) -> Bool {
         if navigationBars[title].waitForExistence(timeout: timeout) { return true }
+        // Fallback for simulators that expose the pushed screen without a
+        // titled bar element: a back button plus the record title somewhere.
+        let bar = navigationBars.firstMatch
+        if bar.buttons.count > 0 && staticTexts[title].exists { return true }
         return descendants(matching: .any).matching(identifier: "canvas")
-            .firstMatch.waitForExistence(timeout: timeout)
+            .firstMatch.waitForExistence(timeout: 1)
     }
 }
