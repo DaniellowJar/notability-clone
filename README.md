@@ -1,5 +1,7 @@
 # NotabilityClone
 
+**Ran out of actions, needed to switch to public repo, WIP!**
+
 A personal, self-hosted Notability alternative for iPad — SwiftUI, sideloaded via
 LiveContainer (free Apple ID, **no Apple Developer Program account required**).
 

@@ -24,3 +24,7 @@ keys.env
 # macOS
 .DS_Store
 /build2/
+
+# Python
+__pycache__/
+*.pyc
