@@ -15,15 +15,37 @@ final class NotabilityCloneUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Cold-booted simulators are slow to present their first sheet; tap once,
+    /// then re-tap before giving up, and dump the hierarchy if both fail.
+    func presentSheet(in app: XCUIApplication, byTapping id: String,
+                      waitingFor element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
+        for attempt in 1...2 {
+            let button = app.buttons[id]
+            if !button.exists {
+                print("PROBE1 attempt=\(attempt) button=\(id) missing")
+            } else {
+                button.tap()
+            }
+            if element.waitForExistence(timeout: attempt == 1 ? 6 : timeout) { return true }
+            print("PROBE1 attempt=\(attempt) sheet-not-present")
+            if let content = element.value as? String { print("PROBE1 value=\(content)") }
+        }
+        print("HIER-BEGIN")
+        print(app.debugDescription)
+        print("HIER-END")
+        return false
+    }
+
     func testNotebookAndRecordFlow() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-inMemoryStore"]
         app.launch()
 
         // 1. Create a notebook from the root grid.
-        app.buttons["addNotebook"].tap()
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
         let notebookField = app.textFields["notebookTitle"]
-        XCTAssertTrue(notebookField.waitForExistence(timeout: 5), "notebook title field should appear")
         notebookField.tap()
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
