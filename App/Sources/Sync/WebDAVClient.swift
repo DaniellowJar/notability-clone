@@ -1,4 +1,5 @@
 import Foundation
+import NotabilityCore
 
 /// Minimal WebDAV client (PROPFIND/GET/PUT/DELETE) for OwnCloud sync (Phase 11).
 /// Credentials come from the Keychain via `AppSecrets` — never stored here.
