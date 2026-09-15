@@ -1,15 +1,19 @@
 import XCTest
 
-/// Reproduces the reported defect end to end: create notebook → land on its
-/// Pages screen, open a page → its canvas, tap New Page → creates and opens a
-/// fresh canvas, both pages listed and deletable. Runs against an in-memory
-/// store on the iPad simulator.
+/// Reproduces the reported defects end to end:
+/// 1. Creating a notebook opens its empty Pages screen — NO auto-created page.
+/// 2. One-tap New Page → "Page 1" → a fresh canvas, and strokes persist after
+///    leaving the canvas and re-entering (previously they were deleted).
+///
+/// Runs against an in-memory store on the iPad simulator.
 ///
 /// iOS 26.2 simulator probe results (2025-09):
 /// - `navigationBars["Untitled"]` is NOT exposed for inline nav titles.
 /// - `PKCanvasView.accessibilityIdentifier = "canvas"` is NOT surfaced.
 /// - The only reliable pushed-screen signal is the back button whose label
 ///   matches the *previous* screen's nav title (e.g. "Notability", "TestNB").
+/// - Stroke persistence is asserted via the DEBUG "canvasDebug" label
+///   (`strokes=N saved=N`) since canvas pixels are not readable from XCUITest.
 final class NotabilityCloneUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -51,48 +55,64 @@ final class NotabilityCloneUITests: XCTestCase {
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
 
-        // The create sheet must dismiss and the Pages screen must push — not
-        // straight into a blank canvas with nothing to tap.
+        // The create sheet must dismiss and the Pages screen must push — with
+        // NO auto-created page (the user makes pages their own way).
         XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
                        "create sheet should dismiss after tapping Create")
         XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
         XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8),
                       "creating a notebook should open its Pages screen with a New Page button")
+        XCTAssertFalse(app.staticTexts["Untitled"].exists,
+                       "no auto-created page should exist — only what the user adds")
 
-        // 2. The auto-created page is listed.
-        XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 8),
-                      "auto-created page must appear in the Pages list")
-
-        // 3. Open it → canvas; back returns to Pages.
-        app.staticTexts["Untitled"].tap()
-        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
-                      "tapping a page should push its canvas")
-        app.navigationBars.firstMatch.buttons["TestNB"].tap()
-        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 5),
-                      "backing out of a canvas should return to Pages")
-
-        // 4. One-tap New Page → creates and opens its canvas directly.
+        // 2. One-tap New Page → creates "Page 1" and opens its canvas directly.
         app.buttons["addPage"].tap()
         XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
                       "tapping New Page should create a page and open its canvas")
+        XCTAssertTrue(app.waitForDebug(label: "strokes=0", timeout: 5),
+                      "fresh canvas starts empty")
 
-        // 5. Back: both pages are listed.
+        // 3. Draw a real stroke; the debug label must report it saved.
+        drawStroke(in: app)
+        XCTAssertTrue(app.waitForDebug(label: "strokes=1", timeout: 5),
+                      "drawing must register a stroke")
+        XCTAssertTrue(app.waitForDebug(label: "saved=1", timeout: 5),
+                      "drawn stroke must be persisted to the store")
+
+        // 4. Back: the created page is listed as "Page 1".
         app.navigationBars.firstMatch.buttons["TestNB"].tap()
-        XCTAssertTrue(app.staticTexts["Page 2"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Untitled"].exists)
+        XCTAssertTrue(app.staticTexts["Page 1"].waitForExistence(timeout: 5),
+                      "the created page must be listed in Pages")
+
+        // 5. Re-enter the page → the stroke must still be there (the fix for
+        //    strokes being deleted on back-navigation).
+        app.staticTexts["Page 1"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
+                      "tapping the page should push its canvas")
+        XCTAssertTrue(app.waitForDebug(label: "strokes=1", timeout: 5),
+                      "persisted stroke must load when re-entering the canvas")
 
         // 6. Page persists after leaving the notebook and re-entering.
+        app.navigationBars.firstMatch.buttons["TestNB"].tap()
         app.navigationBars.firstMatch.buttons["Notability"].tap()
         XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 8),
                       "notebook should be visible in the grid")
         app.staticTexts["TestNB"].tap()
-        XCTAssertTrue(app.staticTexts["Page 2"].waitForExistence(timeout: 8),
+        XCTAssertTrue(app.staticTexts["Page 1"].waitForExistence(timeout: 8),
                       "page must persist when re-entering the notebook")
 
         // 7. Swipe-to-delete the created page.
-        app.staticTexts["Page 2"].swipeLeft()
+        app.staticTexts["Page 1"].swipeLeft()
         app.buttons["Delete"].tap()
-        XCTAssertFalse(app.staticTexts["Page 2"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Page 1"].waitForExistence(timeout: 5))
+    }
+
+    /// Drags a line across the middle of the canvas to produce one PencilKit
+    /// stroke (the canvas fills the screen).
+    private func drawStroke(in app: XCUIApplication) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
+        start.press(forDuration: 0.1, thenDragTo: end)
     }
 }
 
@@ -107,6 +127,24 @@ private extension XCUIApplication {
             if navigationBars.firstMatch.buttons[backButtonLabel].exists { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         }
+        return false
+    }
+
+    /// Polls the DEBUG canvas label ("strokes=N saved=N") until it contains the
+    /// given substring — how stroke persistence is verified from XCUITest.
+    func waitForDebug(label substring: String, timeout: TimeInterval = 8) -> Bool {
+        let debug = staticTexts["canvasDebug"]
+        guard debug.waitForExistence(timeout: 3) else {
+            print("DEBUG-label-missing")
+            print(debugDescription)
+            return false
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if debug.label.contains(substring) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        print("DEBUG-never-contained=\(substring) label=\(debug.label)")
         return false
     }
 }

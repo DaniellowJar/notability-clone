@@ -83,6 +83,14 @@ enum DatastoreSchema {
                 CREATE INDEX idx_segment_record ON transcriptSegment(recordId, seq);
                 """)
         }
+
+        // Bare-canvas persistence: the record's PencilKit drawing blob
+        // (`PKDrawing.dataRepresentation()`). Phase 3 replaces this with
+        // per-stroke canvasBlock storage.
+        migrator.registerMigration("v2_record_drawing") { db in
+            try db.execute(sql: "ALTER TABLE record ADD COLUMN drawingData BLOB")
+        }
+
         return migrator
     }
 }

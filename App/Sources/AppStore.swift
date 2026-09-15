@@ -38,10 +38,11 @@ final class AppStore {
 
     // MARK: - Notebooks
 
-    /// Creates a notebook plus its first "Untitled" record so the UI can push
-    /// straight onto a canvas. Throws so the caller can surface the error.
-    func createNotebook(title: String, coverColorHex: String) throws -> (notebook: Notebook, record: Record) {
-        let created = try store.createNotebookWithInitialRecord(title: title, coverColorHex: coverColorHex)
+    /// Creates the notebook only — no auto-created page. The user lands on an
+    /// empty Pages screen and adds pages themselves ("Page N"). Throws so the
+    /// caller can surface the error.
+    func createNotebook(title: String, coverColorHex: String) throws -> Notebook {
+        let created = try store.createNotebook(title: title, coverColorHex: coverColorHex)
         refreshNotebooks()
         return created
     }

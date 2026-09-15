@@ -162,6 +162,30 @@ public final class NotabilityStore: @unchecked Sendable {
         }
     }
 
+    // MARK: - Canvas drawing
+
+    /// Persists a record's PencilKit drawing blob (`PKDrawing.dataRepresentation()`)
+    /// and bumps `modifiedAt`. The bare PKCanvasView saves here until Phase 3
+    /// moves strokes into per-stroke canvasBlock rows.
+    public func saveDrawingData(_ data: Data, for recordId: UUID) throws {
+        try writer.write { db in
+            try db.execute(
+                sql: "UPDATE record SET drawingData = ?, modifiedAt = ? WHERE id = ?",
+                arguments: [data, Date().timeIntervalSinceReferenceDate, recordId.uuidString]
+            )
+        }
+    }
+
+    public func drawingData(for recordId: UUID) throws -> Data? {
+        try writer.read { db in
+            try Data.fetchOne(
+                db,
+                sql: "SELECT drawingData FROM record WHERE id = ?",
+                arguments: [recordId.uuidString]
+            )
+        }
+    }
+
     // MARK: - Blocks
 
     public func addBlock(

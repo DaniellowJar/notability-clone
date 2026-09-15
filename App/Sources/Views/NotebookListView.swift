@@ -44,7 +44,7 @@ struct NotebookListView: View {
                         let created = try app.createNotebook(title: title, coverColorHex: color)
                         // Push after the sheet is dismissed — NavigationStack drops
                         // path changes made while a sheet is still presented.
-                        pendingNotebookID = created.notebook.id
+                        pendingNotebookID = created.id
                     } catch {
                         errorMessage = "Could not create notebook: \(error.localizedDescription)"
                     }

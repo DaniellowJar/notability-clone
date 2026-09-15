@@ -235,6 +235,59 @@ final class CascadeAndPersistenceTests: XCTestCase {
     }
 }
 
+final class DrawingPersistenceTests: XCTestCase {
+    func testDrawingBlobRoundTrip() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+
+        XCTAssertNil(try store.drawingData(for: rec.id), "fresh record has no drawing")
+
+        let data = Data([0, 42, 255, 1, 2, 3])
+        try store.saveDrawingData(data, for: rec.id)
+        XCTAssertEqual(try store.drawingData(for: rec.id), data)
+    }
+
+    func testSaveDrawingBumpsModifiedAt() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+
+        let before = try store.records(in: nb.id)[0].modifiedAt
+        try store.saveDrawingData(Data([7, 8]), for: rec.id)
+        let after = try store.records(in: nb.id)[0].modifiedAt
+        XCTAssertGreaterThan(after, before)
+    }
+
+    func testDrawingBlobSurvivesReopen() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("store.sqlite").path
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let recID: UUID
+        do {
+            let store = try NotabilityStore(path: path)
+            let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+            recID = try store.createRecord(in: nb.id, title: "r").id
+            try store.saveDrawingData(Data([0, 1, 2, 255]), for: recID)
+        }
+
+        let reopened = try NotabilityStore(path: path)
+        XCTAssertEqual(try reopened.drawingData(for: recID), Data([0, 1, 2, 255]))
+    }
+
+    func testDeleteRecordRemovesDrawing() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+        try store.saveDrawingData(Data([1]), for: rec.id)
+        try store.deleteRecord(rec.id)
+        XCTAssertNil(try store.drawingData(for: rec.id))
+    }
+}
+
 final class StrokeMathTests: XCTestCase {
     func testStrokeBounds() {
         let stroke = StrokeData(
