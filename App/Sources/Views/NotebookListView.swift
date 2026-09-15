@@ -4,6 +4,7 @@ import SwiftUI
 struct NotebookListView: View {
     @Environment(AppStore.self) private var app
     @State private var showingCreate = false
+    @State private var showingSettings = false
     @State private var errorMessage: String?
     @State private var path: [Route] = []
     @State private var pendingNotebookID: UUID?
@@ -13,14 +14,36 @@ struct NotebookListView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                LazyVGrid(columns: Self.gridColumns, spacing: 16) {
-                    notebookGrid
+                VStack(alignment: .leading, spacing: 12) {
+                    if !AppSecrets.shared.isConfigured {
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Label("Set up your AI key in Settings", systemImage: "key.fill")
+                                .font(.footnote)
+                                .frame(maxWidth: .infinity)
+                                .padding(10)
+                                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .accessibilityIdentifier("onboardingBanner")
+                    }
+                    LazyVGrid(columns: Self.gridColumns, spacing: 16) {
+                        notebookGrid
+                    }
                 }
                 .padding(20)
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Notability")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityIdentifier("settingsButton")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingCreate = true
@@ -49,6 +72,9 @@ struct NotebookListView: View {
                         errorMessage = "Could not create notebook: \(error.localizedDescription)"
                     }
                 }
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
             }
             .onChange(of: showingCreate) { _, dismissed in
                 guard !dismissed, let nbID = pendingNotebookID else { return }

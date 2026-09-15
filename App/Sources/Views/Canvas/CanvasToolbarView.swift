@@ -9,6 +9,13 @@ import UIKit
 struct CanvasToolbarView: View {
     @Bindable var session: CanvasSessionState
 
+    var isRecording = false
+    var onToggleRecord: () -> Void = {}
+    var onShowTranscript: () -> Void = {}
+    var onShowQuiz: () -> Void = {}
+    var onExtractPDF: (UUID) -> Void = { _ in }
+    var onRemoveBackground: (UUID) -> Void = { _ in }
+
     @State private var photosItem: PhotosPickerItem?
     @State private var showCamera = false
     @State private var showImporter = false
@@ -64,6 +71,10 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "lasso", id: "toolSelect") { session.startSelectTool() }
             ToolButton(systemImage: "function", id: "toolCalc") { session.startPlaceCalc() }
             ToolButton(systemImage: "textformat.size", id: "toolLetter") { session.toggleLetterMode() }
+            Divider().frame(height: 20)
+            ToolButton(systemImage: isRecording ? "stop.circle.fill" : "mic", id: "toolRecord", tint: isRecording ? .red : .primary) { onToggleRecord() }
+            ToolButton(systemImage: "waveform", id: "toolTranscript") { onShowTranscript() }
+            ToolButton(systemImage: "list.number", id: "toolQuiz") { onShowQuiz() }
         }
         .onChange(of: photosItem) { _, item in
             guard let item else { return }
@@ -89,13 +100,27 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "trash", id: "blockDelete", tint: .red) {
                 session.deleteBlock(blockID)
             }
-            if let block = session.blocks.first(where: { $0.id == blockID }),
-               case .text = block.payload {
-                Divider().frame(height: 20)
-                FontSizeStepper(
-                    value: block.textPayload?.fontSize ?? TextBlockLayout.defaultFontSize
-                ) { size in
-                    session.setTextFontSize(blockID, size: size)
+            if let block = session.blocks.first(where: { $0.id == blockID }) {
+                switch block.payload {
+                case .text:
+                    Divider().frame(height: 20)
+                    FontSizeStepper(
+                        value: block.textPayload?.fontSize ?? TextBlockLayout.defaultFontSize
+                    ) { size in
+                        session.setTextFontSize(blockID, size: size)
+                    }
+                case .pdfPage:
+                    Divider().frame(height: 20)
+                    ToolButton(systemImage: "doc.richtext", id: "extractPDF") {
+                        onExtractPDF(blockID)
+                    }
+                case .image:
+                    Divider().frame(height: 20)
+                    ToolButton(systemImage: "wand.and.stars", id: "removeBackground") {
+                        onRemoveBackground(blockID)
+                    }
+                default:
+                    break
                 }
             }
             ToolButton(title: "Done", id: "toolDone") { session.deselect() }

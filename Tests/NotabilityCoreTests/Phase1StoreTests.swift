@@ -211,10 +211,12 @@ final class CascadeAndPersistenceTests: XCTestCase {
         let store = try NotabilityStore()
         let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
         let rec = try store.createRecord(in: nb.id, title: "r")
-        try store.setAudioTrack(AudioTrack(fileRef: "audio-1.m4a", duration: 91.5), for: rec.id)
+        let recordedAt = Date(timeIntervalSince1970: 1700)
+        try store.setAudioTrack(AudioTrack(fileRef: "audio-1.m4a", duration: 91.5, recordedAt: recordedAt), for: rec.id)
         let track = try store.audioTrack(for: rec.id)
         XCTAssertEqual(track?.fileRef, "audio-1.m4a")
         XCTAssertEqual(track?.duration, 91.5)
+        XCTAssertEqual(track?.recordedAt, recordedAt)
     }
 
     func testTranscriptPersistsInOrder() throws {

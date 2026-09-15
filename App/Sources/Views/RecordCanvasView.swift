@@ -16,6 +16,9 @@ struct RecordCanvasView: View {
     @State private var session = CanvasSessionState()
     @State private var inkStore = InkStrokeStore()
     @State private var recognitionService: StrokeRecognitionService?
+    @State private var recordingSession: RecordingSession?
+    @State private var showTranscript = false
+    @State private var showQuiz = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -31,7 +34,6 @@ struct RecordCanvasView: View {
                     }
                 )
                 .allowsHitTesting(session.mode.allowsInkHitTesting)
-
                 InkRenderView(strokes: inkStore.strokes, style: session.letterMode ? .letterMode : .normal)
                     .allowsHitTesting(false)
 
@@ -52,7 +54,15 @@ struct RecordCanvasView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .bottomBar)
         .overlay(alignment: .top) {
-            CanvasToolbarView(session: session)
+            CanvasToolbarView(
+                session: session,
+                isRecording: recordingSession?.isRecording ?? false,
+                onToggleRecord: { toggleRecording() },
+                onShowTranscript: { showTranscript = true },
+                onShowQuiz: { showQuiz = true },
+                onExtractPDF: { extractPDF(blockID: $0) },
+                onRemoveBackground: { removeBackground(blockID: $0) }
+            )
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
@@ -65,6 +75,12 @@ struct RecordCanvasView: View {
                 .padding(.top, 52)
         }
         #endif
+        .sheet(isPresented: $showTranscript) {
+            TranscriptSheet(store: app.store, recordID: record.id, blocks: session.blocks)
+        }
+        .sheet(isPresented: $showQuiz) {
+            QuizSheet(store: app.store, recordID: record.id)
+        }
         .onAppear {
             session.load(recordID: record.id, store: app.store)
             let service = StrokeRecognitionService(store: app.store, recordID: record.id, inkStore: inkStore)
@@ -74,6 +90,8 @@ struct RecordCanvasView: View {
         .onDisappear {
             session.flushPendingSaves()
             recognitionService = nil
+            recordingSession?.stop()
+            recordingSession = nil
         }
         .alert("Error", isPresented: errorAlertBinding) {
         } message: {
@@ -101,9 +119,51 @@ struct RecordCanvasView: View {
             set: { if !$0 { session.errorMessage = nil } }
         )
     }
+
+    // MARK: - Audio / transcript / PDF / quiz actions
+
+    private func toggleRecording() {
+        let session = recordingSession ?? RecordingSession(store: app.store, recordID: record.id)
+        if recordingSession == nil { recordingSession = session }
+        if session.isRecording {
+            session.stop()
+        } else {
+            session.start()
+        }
+    }
+
+    private func extractPDF(blockID: UUID) {
+        guard let block = self.session.blocks.first(where: { $0.id == blockID }),
+              let ref = block.pdfSourceRef else { return }
+        let url = BlobStore.shared.url(for: ref)
+        if let extracted = PDFExtractService.extractPage(pdfURL: url) {
+            self.session.insertImageFromExtract(extracted, near: blockID)
+        } else {
+            self.session.errorMessage = "Could not extract the PDF page."
+        }
+    }
+
+    private func removeBackground(blockID: UUID) {
+        guard let block = session.blocks.first(where: { $0.id == blockID }),
+              let ref = block.imageRef,
+              let data = BlobStore.shared.data(for: ref) else { return }
+        Task {
+            // TODO(provider): stub returns the image unchanged; the live
+            // endpoint returns a transparent PNG once configured (Settings).
+            if let out = try? await AppProviders.shared.backgroundRemoval.removeBackground(imagePNG: data) {
+                let base = URL(fileURLWithPath: ref).deletingPathExtension().lastPathComponent
+                let newRef = "\(BlobNaming.imagesDir)/\(base)-nobg.png"
+                if (try? BlobStore.shared.save(out, as: newRef)) != nil {
+                    await MainActor.run {
+                        session.replaceImageRef(blockID, ref: newRef, backgroundRemoved: true)
+                    }
+                }
+            }
+        }
+    }
 }
 
-private struct PKCanvasContainer: UIViewRepresentable {
+private struct PKCanvasContainer: UIViewControllerRepresentable {
     let recordID: UUID
     let store: NotabilityStore
     let inkStore: InkStrokeStore
@@ -112,7 +172,40 @@ private struct PKCanvasContainer: UIViewRepresentable {
     /// (visibleStrokes, savedStrokes) reported from the coordinator.
     let onStateChange: (Int, Int) -> Void
 
-    func makeUIView(context: Context) -> PKCanvasView {
+    func makeUIViewController(context: Context) -> CanvasViewController {
+        let controller = CanvasViewController(recordID: recordID, store: store, inkStore: inkStore)
+        controller.coordinator.onStateChange = onStateChange
+        controller.coordinator.onStrokeCaptured = onStrokeCaptured
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: CanvasViewController, context: Context) {
+        uiViewController.coordinator.onStateChange = onStateChange
+        uiViewController.coordinator.onStrokeCaptured = onStrokeCaptured
+    }
+}
+
+/// Hosts the capture PKCanvasView. `viewDidAppear` re-reads the store so the
+/// renderer/debug state is correct every time the screen is entered (SwiftUI
+/// can reuse a representable's view without re-running make*).
+final class CanvasViewController: UIViewController {
+    let coordinator = Coordinator()
+    private let recordID: UUID
+    private let store: NotabilityStore
+    private let inkStore: InkStrokeStore
+
+    init(recordID: UUID, store: NotabilityStore, inkStore: InkStrokeStore) {
+        self.recordID = recordID
+        self.store = store
+        self.inkStore = inkStore
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private var canvas: PKCanvasView { view as! PKCanvasView }
+
+    override func loadView() {
         let settings = AppSettings.shared
         let canvas = CaptureCanvasView()
         canvas.backgroundColor = .systemBackground
@@ -124,25 +217,25 @@ private struct PKCanvasContainer: UIViewRepresentable {
         ) ? .anyInput : .pencilOnly
         canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
         canvas.accessibilityIdentifier = "canvas"
-        canvas.delegate = context.coordinator
+        canvas.delegate = coordinator
         canvas.onPencilFirstUse = { [weak canvas] in
             let lock = CanvasInputPolicy.shouldLockTouch(afterPencilUse: settings.allowFingerDrawing)
             settings.touchLockedByPencil = lock
             if lock { canvas?.drawingPolicy = .pencilOnly }
         }
-        context.coordinator.onStateChange = onStateChange
-        context.coordinator.onStrokeCaptured = onStrokeCaptured
-        context.coordinator.loadDrawing(into: canvas, store: store, recordID: recordID, inkStore: inkStore)
-        context.coordinator.attach(to: canvas)
-        return canvas
+        view = canvas
     }
 
-    func updateUIView(_ uiView: PKCanvasView, context: Context) {
-        context.coordinator.onStateChange = onStateChange
-        context.coordinator.onStrokeCaptured = onStrokeCaptured
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        coordinator.loadDrawing(into: canvas, store: store, recordID: recordID, inkStore: inkStore)
+        coordinator.attach(to: canvas)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        coordinator.reloadFromStore()
+    }
 
     /// Capture coordinator: migrates any legacy drawing blob, loads existing
     /// stroke blocks as the renderer baseline, diffs newly completed strokes,
@@ -166,17 +259,25 @@ private struct PKCanvasContainer: UIViewRepresentable {
             self.inkStore = inkStore
 
             DrawingMigrator.migrateIfNeeded(recordID: recordID, store: store)
+            reloadFromStore()
+        }
 
+        /// Re-reads stroke blocks from the store and reconciles the ink store,
+        /// the hidden canvas drawing, and the reported debug counts. Safe on
+        /// every appear: during active drawing the captured count matches the
+        /// store (persisted at capture), so nothing is wiped.
+        func reloadFromStore() {
+            guard let store, let recordID, let canvas else { return }
             let strokeBlocks = (try? store.strokeBlocks(in: recordID)) ?? []
             let strokes = strokeBlocks.compactMap { block -> StrokeData? in
                 guard case .stroke(let list, _, _) = block.payload, let first = list.first else { return nil }
                 return first
             }
-            inkStore.load(strokes)
-            capturedCount = strokes.count
-            // Rebuild the canvas's own drawing so its stroke count matches our
-            // capture (baseline for diff + undo). Hidden beneath the ink view.
-            canvas.drawing = PKStrokeConverter.drawing(from: strokes)
+            if strokes.count != capturedCount {
+                inkStore?.load(strokes)
+                capturedCount = strokes.count
+                canvas.drawing = PKStrokeConverter.drawing(from: strokes)
+            }
             onStateChange?(canvas.drawing.strokes.count, capturedCount)
         }
 

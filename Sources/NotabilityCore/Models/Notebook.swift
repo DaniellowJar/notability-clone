@@ -51,10 +51,15 @@ public struct Record: Codable, Equatable, Hashable, Identifiable, Sendable {
 public struct AudioTrack: Codable, Equatable, Sendable {
     public var fileRef: String
     public var duration: TimeInterval
+    /// Wall-clock start of the recording — the origin of the shared
+    /// transcript↔canvas clock. nil for legacy/imported tracks (Phase 9 sync
+    /// then can't map, which callers handle gracefully).
+    public var recordedAt: Date?
 
-    public init(fileRef: String, duration: TimeInterval) {
+    public init(fileRef: String, duration: TimeInterval, recordedAt: Date? = nil) {
         self.fileRef = fileRef
         self.duration = duration
+        self.recordedAt = recordedAt
     }
 }
 

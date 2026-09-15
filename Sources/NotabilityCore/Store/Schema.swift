@@ -91,6 +91,11 @@ enum DatastoreSchema {
             try db.execute(sql: "ALTER TABLE record ADD COLUMN drawingData BLOB")
         }
 
+        // Shared clock origin for transcript↔canvas sync (Phase 9).
+        migrator.registerMigration("v3_audio_recordedAt") { db in
+            try db.execute(sql: "ALTER TABLE audioTrack ADD COLUMN recordedAt DOUBLE")
+        }
+
         return migrator
     }
 }

@@ -7,44 +7,47 @@ gate before producing any `.ipa`.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Data model + Notebook/Record CRUD; bare PKCanvasView; stroke persistence (drawing blob); pencil-locks touch off | ✅ Done (48 core + app + UI tests green) |
-| 2 | Text / image / PDF-attachment blocks + canvas layout (area-select text, tap-to-place, font stepper, library+camera, PDFKit viewer) | ✅ Done (in CI) |
-| 3 | Custom stroke rendering — PencilKit capture + Core Graphics/Metal renderer behind `StrokeRenderer`; migrate blob → stroke blocks | ⬜ |
-| 4 | Background Vision text recognition on strokes (accurate mode), stored alongside strokes | ⬜ |
-| 5 | Baseline/slant geometric correction ("beautify v1") | ⬜ |
-| 6 | Letter Mode (gradient aging of old strokes, edge distance indicator) | ⬜ |
-| 7 | Inline calculator + AI math fallback with editable variables (DeepInfra vision, BYOK) | ⬜ |
-| 8 | Audio recording + DeepInfra Whisper transcription (chunked WAV), per-block timestamps | ⬜ |
-| 9 | Dual-tab transcript UI with click-to-sync both directions | ⬜ |
-| 10 | PDF extract mode (rasterize, zoom, crop, background removal) | ⬜ |
-| 11 | OwnCloud/WebDAV sync (LWW per block, change log) | ⬜ |
-| 12 | Quiz generation from transcript + notes (DeepInfra, BYOK) | ⬜ |
-| 13 | Onboarding flow (OwnCloud login, DeepInfra key in Keychain, permissions) | ⬜ |
+| 1 | Data model + CRUD; bare canvas; stroke persistence (blob); pencil locks touch off | ✅ |
+| 2 | Text/image/PDF-attachment blocks + layout (area-select text, tap-to-place, font stepper, library+camera, PDFKit) | ✅ |
+| 3 | Custom stroke rendering (capture-only canvas, CG renderer, blob→stroke-block migration) | ✅ |
+| 4 | Vision text recognition on strokes (accurate), stored per block | ✅ |
+| 5 | Geometric beautify v1 (de-slant shear + baseline snap) | ✅ |
+| 6 | Letter Mode (age-faded ink + edge-distance gauge) | ✅ |
+| 7 | Inline calculator (local eval) + AI math fallback (stubbed provider) | ✅ |
+| 8 | Audio recording (WAV chunks) + transcription pipeline (stubbed provider) | ✅ |
+| 9 | Transcript UI with click-to-sync (shared clock) | ✅ |
+| 10 | PDF extract mode (high-DPI raster → image block) + background removal (stubbed) | ✅ |
+| 11 | OwnCloud/WebDAV sync — LWW diff engine (client transport still TODO) | ◑ |
+| 12 | Quiz generation from transcript + notes (stubbed provider) | ✅ |
+| 13 | Settings/onboarding (DeepInfra key + OwnCloud creds in Keychain) | ✅ |
 
-## Product decisions (from planning sessions + overnight decisions)
+Legend: ✅ shipped (core + app, CI-green where CI has run); ◑ core done, app
+transport/stub wiring pending.
 
-- **Persistence**: GRDB/SQLite; byte-identical on iOS + Linux so core tests
-  mirror the shipped store. Dates as Double (`timeIntervalSinceReferenceDate`).
-- **Min iOS**: 17. **Renderer**: Metal/Core Graphics behind `StrokeRenderer`.
-- **AI (BYOK, keys in Keychain only)**: DeepInfra primary.
-  - Math OCR/solve: DeepInfra vision chat (`Qwen/Qwen3-VL-235B-A22B-Instruct`),
-    strict JSON schema; local `ExpressionEvaluator` runs first.
-  - Transcription: DeepInfra Whisper `openai/whisper-large-v3-turbo`
-    (OpenAI-compatible `/audio/transcriptions`, WAV chunks; m4a not accepted).
-  - Quiz: DeepInfra chat `deepseek-ai/DeepSeek-V4-Flash-0731`, strict JSON.
-  - Background removal: any OpenAI-compatible endpoint (self-hosted rembg shim
-    in `shims/` must run on a machine with spare CPU — NOT the 2-core harness).
-  - Network calls are stubbed behind `AIProvider` protocols by default; live
-    providers throw `.notConfigured` until Phase 13 stores a key.
-- **Sync**: WebDAV/OwnCloud client-side only (no server on the 2-core host);
-  LWW per block on `modifiedAt`; `changeLog` table + pure `SyncDiffEngine`.
-- **Canvas**: PKCanvasView is input-capture-only; custom rendering from Phase 3.
-  Strokes stored as `.stroke` blocks; existing blob drawings migrate on open.
-- **Distribution**: unsigned `.ipa` for LiveContainer via GitHub prereleases.
+## Product decisions
+
+- **Persistence**: GRDB/SQLite; byte-identical on iOS + Linux. Dates as Double.
+- **Min iOS**: 17. **Renderer**: Core Graphics behind `StrokeRendering`.
+- **AI (BYOK, keys in Keychain only)**: DeepInfra primary. Math OCR = DeepInfra
+  vision chat (strict JSON schema); transcription = Whisper
+  `openai/whisper-large-v3-turbo` (WAV chunks, OpenAI-compatible); quiz = chat
+  (`deepseek-ai/DeepSeek-V4-Flash-0731`); background removal = any
+  OpenAI-compatible endpoint (self-hosted rembg shim must run on a machine with
+  spare CPU — not the 2-core harness). `AppProviders` is the clearly-marked
+  swap point; stubs ship by default until an API key is configured.
+- **Sync**: WebDAV/OwnCloud client-side (LWW per block on mtime); the diff
+  engine is core-tested; the URLSession WebDAV client is TODO. No server runs
+  on the 2-core harness.
+- **Canvas**: PKCanvasView is input-capture-only; ink renders via the custom
+  renderer; strokes persist as `.stroke` blocks; legacy blobs migrate on open.
+- **Distribution**: unsigned `.ipa` via GitHub prereleases (LiveContainer).
 
 ## Open items / notes
 
-- Provider "integration points" are built (request builders + parsers, Linux-
-  tested against fixtures) but live calls are stubs until keys exist.
-- UI tests use DEBUG hooks (`canvasDebug` label, `-inMemoryStore`) because
-  PhotosPicker/fileImporter/PencilKit pixels aren't scriptable from XCUITest.
+- Live provider network calls are stubs until keys exist; UI tests use DEBUG
+  hooks because PhotosPicker/fileImporter/camera/PencilKit pixels aren't
+  scriptable from XCUITest.
+- Letter Mode viewport auto-pan (narrow 2–3-letter window) is a follow-up; v1
+  ships age-fading + edge gauge.
+- Deletion propagation in sync needs a change log (tombstones) — v1 is
+  upload/download only.

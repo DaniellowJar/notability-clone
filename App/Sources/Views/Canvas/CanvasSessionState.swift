@@ -301,6 +301,35 @@ final class CanvasSessionState {
         }
     }
 
+    /// Inserts an image block from a PDF-extract raster below its source block.
+    func insertImageFromExtract(_ extractedRef: String, near blockID: UUID) {
+        guard let store, let recordID,
+              let idx = blocks.firstIndex(where: { $0.id == blockID }) else { return }
+        let source = blocks[idx]
+        let frame = Rect(
+            x: source.frame.minX,
+            y: source.frame.maxY + 12,
+            width: min(source.frame.size.width * 0.7, 300),
+            height: 260
+        )
+        do {
+            _ = try store.addBlock(in: recordID, kind: .image, frame: frame, payload: .image(ImageBlockPayload(imageRef: extractedRef)))
+            blocks = try store.blocks(in: recordID).filter { $0.kind != .stroke }
+        } catch {
+            errorMessage = "Could not add extracted page: \(error.localizedDescription)"
+        }
+    }
+
+    /// Swaps an image block's blob (e.g. for a background-removed PNG).
+    func replaceImageRef(_ id: UUID, ref: String, backgroundRemoved: Bool) {
+        guard let idx = blocks.firstIndex(where: { $0.id == id }),
+              case .image(var payload) = blocks[idx].payload else { return }
+        payload.imageRef = ref
+        payload.backgroundRemoved = backgroundRemoved
+        blocks[idx] = withPayload(.image(payload), at: idx)
+        scheduleTextSave(id: id, payload: .image(payload))
+    }
+
     // MARK: - Text block editing
 
     func setText(_ id: UUID, text: String) {

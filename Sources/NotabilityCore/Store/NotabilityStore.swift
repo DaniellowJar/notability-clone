@@ -293,10 +293,10 @@ public final class NotabilityStore: @unchecked Sendable {
         try writer.write { db in
             try db.execute(
                 sql: """
-                INSERT INTO audioTrack (recordId, fileRef, duration) VALUES (?, ?, ?)
-                ON CONFLICT(recordId) DO UPDATE SET fileRef = excluded.fileRef, duration = excluded.duration
+                INSERT INTO audioTrack (recordId, fileRef, duration, recordedAt) VALUES (?, ?, ?, ?)
+                ON CONFLICT(recordId) DO UPDATE SET fileRef = excluded.fileRef, duration = excluded.duration, recordedAt = excluded.recordedAt
                 """,
-                arguments: [recordId.uuidString, track.fileRef, track.duration]
+                arguments: [recordId.uuidString, track.fileRef, track.duration, track.recordedAt?.timeIntervalSinceReferenceDate]
             )
         }
     }
@@ -308,7 +308,8 @@ public final class NotabilityStore: @unchecked Sendable {
             }
             return AudioTrack(
                 fileRef: row["fileRef"] as String,
-                duration: row["duration"] as Double
+                duration: row["duration"] as Double,
+                recordedAt: (row["recordedAt"] as Double?).map(Date.init(timeIntervalSinceReferenceDate:))
             )
         }
     }
@@ -505,8 +506,9 @@ public final class NotabilityStore: @unchecked Sendable {
                 let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM audioTrack WHERE recordId = ?", arguments: [trackEntry.recordId.uuidString]) ?? 0
                 guard exists == 0 else { continue }
                 try db.execute(
-                    sql: "INSERT INTO audioTrack (recordId, fileRef, duration) VALUES (?, ?, ?)",
-                    arguments: [trackEntry.recordId.uuidString, trackEntry.track.fileRef, trackEntry.track.duration]
+                    sql: "INSERT INTO audioTrack (recordId, fileRef, duration, recordedAt) VALUES (?, ?, ?, ?)",
+                    arguments: [trackEntry.recordId.uuidString, trackEntry.track.fileRef, trackEntry.track.duration,
+                                trackEntry.track.recordedAt?.timeIntervalSinceReferenceDate]
                 )
                 summary.audioTracks += 1
             }
