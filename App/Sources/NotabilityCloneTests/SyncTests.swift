@@ -18,9 +18,10 @@ final class WebDAVParserTests: XCTestCase {
         """
         let files = try WebDAVParser.parseMultistatus(Data(xml.utf8))
         XCTAssertEqual(files.count, 1)
-        XCTAssertEqual(files[0].path, "/notability/backup.json")
-        XCTAssertEqual(files[0].etag, "\"abc123\"")
-        XCTAssertNotNil(files[0].modifiedAt)
+        guard let file = files.first else { return }
+        XCTAssertEqual(file.path, "/notability/backup.json")
+        XCTAssertEqual(file.etag, "\"abc123\"")
+        XCTAssertNotNil(file.modifiedAt)
     }
 
     func testRejectsGarbage() {

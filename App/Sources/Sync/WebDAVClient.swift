@@ -71,6 +71,7 @@ enum WebDAVParser {
     static func parseMultistatus(_ data: Data) throws -> [RemoteFile] {
         let parser = ParserDelegate()
         let xmlParser = XMLParser(data: data)
+        xmlParser.shouldProcessNamespaces = true // so elementName is "response", not "d:response"
         xmlParser.delegate = parser
         guard xmlParser.parse() else { throw AIProviderError.invalidResponse }
         return parser.files
