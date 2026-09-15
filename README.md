@@ -33,6 +33,31 @@ git push origin main                # CI builds, publishes beta release
 Install the beta: download the attached `.ipa` on the iPad, open in
 **LiveContainer**. No signing ceremony — the artifact is intentionally unsigned.
 
+## Install with LiveContainer (iPad)
+
+No Apple Developer account needed — the release `.ipa` is unsigned and runs in
+LiveContainer.
+
+1. Get **LiveContainer** on the iPad (side-load it the usual way — e.g. with
+   AltStore / Sideloadly / a signing service).
+2. Open the repo's **Releases** page, download the latest `NotabilityClone.ipa`
+   (the `beta-…` prerelease), and open it with **LiveContainer** on the iPad
+   (AirDrop/iCloud Drive both work). LiveContainer imports it and it appears in
+   the app list; tap to launch.
+3. That's it. Notebooks, records, canvas drawings and transcripts are stored in
+   the app container's `Documents/notability.sqlite`.
+
+**Optional — seed data (JSON):** LiveContainer exposes the container's
+`Documents` folder in its UI. Drop a file named `notability-seed.json` there and
+it is imported on the next launch (idempotent — existing ids are skipped). The
+schema is the `StoreBackup` envelope: `{version, notebooks, records, blocks,
+audioTracks, transcriptSegments}`. Export a template with anything that writes
+your own seed file:
+
+```json
+{"version":1,"notebooks":[],"records":[],"blocks":[],"audioTracks":[],"transcriptSegments":[]}
+```
+
 ## Product decisions (locked)
 
 - **Persistence**: GRDB/SQLite (plain SQLite = byte-identical on iOS + Linux, so

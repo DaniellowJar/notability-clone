@@ -18,6 +18,7 @@ targets:
       - path: Sources
         excludes:
           - NotabilityCloneTests
+          - NotabilityCloneUITests
     dependencies:
       - package: NotabilityCore
     settings:
@@ -50,12 +51,29 @@ targets:
       - target: NotabilityClone
         embed: false
 
+  NotabilityCloneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Sources/NotabilityCloneUITests
+    dependencies:
+      - target: NotabilityClone
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.daniellow.notabilityclone.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: NotabilityClone
+        SWIFT_VERSION: "5.10"
+
 schemes:
   NotabilityClone:
     build:
       targets:
         NotabilityClone: all
         NotabilityCloneTests: [test]
+        NotabilityCloneUITests: [test]
     test:
       targets:
         - NotabilityCloneTests
+        - NotabilityCloneUITests

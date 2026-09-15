@@ -2,7 +2,7 @@ import Foundation
 
 /// Top-level container. A Notebook holds an ordered list of Records
 /// (Record replaces the "Page" concept of Notability).
-public struct Notebook: Codable, Equatable, Identifiable, Sendable {
+public struct Notebook: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var title: String
     public var coverColorHex: String
@@ -25,7 +25,7 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// A Record is a flexible, vertically-infinite canvas (not a fixed page).
-public struct Record: Codable, Equatable, Identifiable, Sendable {
+public struct Record: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var notebookId: UUID
     public var title: String

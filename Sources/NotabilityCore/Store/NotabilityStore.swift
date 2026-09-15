@@ -70,6 +70,47 @@ public final class NotabilityStore: @unchecked Sendable {
         }
     }
 
+    /// Creates a notebook together with its first (untitled) record, so the
+    /// app can drop the user straight onto a canvas right after creating a
+    /// notebook (Notability-style) without hitting an empty records screen.
+    public func createNotebookWithInitialRecord(
+        title: String,
+        coverColorHex: String,
+        recordTitle: String = "Untitled"
+    ) throws -> (notebook: Notebook, record: Record) {
+        try writer.write { db in
+            let notebook = Notebook(title: title, coverColorHex: coverColorHex)
+            try db.execute(
+                sql: """
+                INSERT INTO notebook (id, title, coverColorHex, createdAt, modifiedAt)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    notebook.id.uuidString,
+                    notebook.title,
+                    notebook.coverColorHex,
+                    notebook.createdAt.timeIntervalSinceReferenceDate,
+                    notebook.modifiedAt.timeIntervalSinceReferenceDate
+                ]
+            )
+            let record = Record(notebookId: notebook.id, title: recordTitle)
+            try db.execute(
+                sql: """
+                INSERT INTO record (id, notebookId, title, createdAt, modifiedAt)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    record.id.uuidString,
+                    record.notebookId.uuidString,
+                    record.title,
+                    record.createdAt.timeIntervalSinceReferenceDate,
+                    record.modifiedAt.timeIntervalSinceReferenceDate
+                ]
+            )
+            return (notebook, record)
+        }
+    }
+
     // MARK: - Records
 
     public func createRecord(in notebookId: UUID, title: String) throws -> Record {
@@ -266,6 +307,188 @@ public final class NotabilityStore: @unchecked Sendable {
     public func clearTranscript(for recordId: UUID) throws {
         try writer.write { db in
             try db.execute(sql: "DELETE FROM transcriptSegment WHERE recordId = ?", arguments: [recordId.uuidString])
+        }
+    }
+
+    // MARK: - Backup (JSON seed / export)
+
+    /// Full-store snapshot as JSON. Idempotent-importable via `importBackup`.
+    public func backupData() throws -> Data {
+        try writer.read { db in
+            let notebooks = try Self.fetchNotebooks(db, order: "createdAt")
+
+            let records = try Row.fetchAll(db, sql: "SELECT * FROM record ORDER BY createdAt").map(Self.decodeRecord)
+            let blocks = try Row.fetchAll(db, sql: "SELECT * FROM canvasBlock ORDER BY recordId, zIndex").map(Self.decodeBlock)
+
+            let audioRows = try Row.fetchAll(db, sql: "SELECT recordId, fileRef, duration FROM audioTrack")
+            let audio = audioRows.map { row in
+                AudioTrackBackup(
+                    recordId: UUID(uuidString: row["recordId"] as String)!,
+                    track: AudioTrack(
+                        fileRef: row["fileRef"] as String,
+                        duration: row["duration"] as Double
+                    )
+                )
+            }
+
+            let segmentRows = try Row.fetchAll(db, sql: "SELECT * FROM transcriptSegment ORDER BY seq")
+            let segments = segmentRows.map { row in
+                TranscriptSegment(
+                    id: UUID(uuidString: row["id"] as String)!,
+                    recordId: UUID(uuidString: row["recordId"] as String)!,
+                    seq: row["seq"] as Int,
+                    text: row["text"] as String,
+                    startTime: row["startTime"] as Double,
+                    endTime: row["endTime"] as Double
+                )
+            }
+
+            let backup = StoreBackup(
+                notebooks: notebooks,
+                records: records,
+                blocks: blocks,
+                audioTracks: audio,
+                transcriptSegments: segments
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            return try encoder.encode(backup)
+        }
+    }
+
+    /// Imports a `StoreBackup`. Rows whose id already exists are skipped, so
+    /// re-importing (e.g. a fixed seed file kept in Documents) never duplicates.
+    /// zIndex/seq are recomputed per record so ordering stays consistent even
+    /// when the file is stale relative to the current store.
+    public func importBackup(_ data: Data) throws -> BackupSummary {
+        let backup = try JSONDecoder().decode(StoreBackup.self, from: data)
+        guard backup.version == 1 else { throw BackupError.unsupportedVersion(backup.version) }
+
+        guard Set(backup.notebooks.map(\.id)).count == backup.notebooks.count else {
+            throw BackupError.duplicateNotebookID
+        }
+        guard Set(backup.records.map(\.id)).count == backup.records.count else {
+            throw BackupError.duplicateRecordID
+        }
+
+        let notebookIDs = Set(backup.notebooks.map(\.id))
+        let recordIDs = Set(backup.records.map(\.id))
+        for record in backup.records where !notebookIDs.contains(record.notebookId) {
+            throw BackupError.orphanRecord(record.id)
+        }
+        for block in backup.blocks where !recordIDs.contains(block.recordId) {
+            throw BackupError.orphanBlock(block.id)
+        }
+        for track in backup.audioTracks where !recordIDs.contains(track.recordId) {
+            throw BackupError.orphanAudioTrack(track.recordId)
+        }
+        for segment in backup.transcriptSegments where !recordIDs.contains(segment.recordId) {
+            throw BackupError.orphanTranscriptSegment(segment.id)
+        }
+
+        return try writer.write { db in
+            var summary = BackupSummary(notebooks: 0, records: 0, blocks: 0, audioTracks: 0, transcriptSegments: 0)
+
+            for notebook in backup.notebooks {
+                let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM notebook WHERE id = ?", arguments: [notebook.id.uuidString]) ?? 0
+                guard exists == 0 else { continue }
+                try db.execute(
+                    sql: """
+                    INSERT INTO notebook (id, title, coverColorHex, createdAt, modifiedAt)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        notebook.id.uuidString, notebook.title, notebook.coverColorHex,
+                        notebook.createdAt.timeIntervalSinceReferenceDate,
+                        notebook.modifiedAt.timeIntervalSinceReferenceDate
+                    ]
+                )
+                summary.notebooks += 1
+            }
+
+            for record in backup.records {
+                let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM record WHERE id = ?", arguments: [record.id.uuidString]) ?? 0
+                guard exists == 0 else { continue }
+                try db.execute(
+                    sql: """
+                    INSERT INTO record (id, notebookId, title, createdAt, modifiedAt)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        record.id.uuidString, record.notebookId.uuidString, record.title,
+                        record.createdAt.timeIntervalSinceReferenceDate,
+                        record.modifiedAt.timeIntervalSinceReferenceDate
+                    ]
+                )
+                summary.records += 1
+            }
+
+            // zIndex: append after whatever the store already has per record.
+            var nextZ: [UUID: Int] = [:]
+            for block in backup.blocks {
+                let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM canvasBlock WHERE id = ?", arguments: [block.id.uuidString]) ?? 0
+                guard exists == 0 else { continue }
+                let z: Int
+                if let current = nextZ[block.recordId] {
+                    z = current + 1
+                } else {
+                    let maxZ = try Int.fetchOne(db, sql: "SELECT MAX(zIndex) FROM canvasBlock WHERE recordId = ?", arguments: [block.recordId.uuidString]) ?? 0
+                    z = maxZ + 1
+                }
+                nextZ[block.recordId] = z
+                try db.execute(
+                    sql: """
+                    INSERT INTO canvasBlock (
+                        id, recordId, kind, frameX, frameY, frameWidth, frameHeight,
+                        zIndex, timestamp, payload, modifiedAt
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        block.id.uuidString, block.recordId.uuidString, block.kind.rawValue,
+                        block.frame.origin.x, block.frame.origin.y,
+                        block.frame.size.width, block.frame.size.height,
+                        z,
+                        block.timestamp.timeIntervalSinceReferenceDate,
+                        try Self.encode(block.payload),
+                        block.modifiedAt.timeIntervalSinceReferenceDate
+                    ]
+                )
+                summary.blocks += 1
+            }
+
+            for trackEntry in backup.audioTracks {
+                let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM audioTrack WHERE recordId = ?", arguments: [trackEntry.recordId.uuidString]) ?? 0
+                guard exists == 0 else { continue }
+                try db.execute(
+                    sql: "INSERT INTO audioTrack (recordId, fileRef, duration) VALUES (?, ?, ?)",
+                    arguments: [trackEntry.recordId.uuidString, trackEntry.track.fileRef, trackEntry.track.duration]
+                )
+                summary.audioTracks += 1
+            }
+
+            var nextSeq: [UUID: Int] = [:]
+            for segment in backup.transcriptSegments {
+                let exists = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM transcriptSegment WHERE id = ?", arguments: [segment.id.uuidString]) ?? 0
+                guard exists == 0 else { continue }
+                let seq: Int
+                if let current = nextSeq[segment.recordId] {
+                    seq = current + 1
+                } else {
+                    let maxSeq = try Int.fetchOne(db, sql: "SELECT MAX(seq) FROM transcriptSegment WHERE recordId = ?", arguments: [segment.recordId.uuidString]) ?? 0
+                    seq = maxSeq + 1
+                }
+                nextSeq[segment.recordId] = seq
+                try db.execute(
+                    sql: "INSERT INTO transcriptSegment (id, recordId, seq, text, startTime, endTime) VALUES (?, ?, ?, ?, ?, ?)",
+                    arguments: [
+                        segment.id.uuidString, segment.recordId.uuidString, seq,
+                        segment.text, segment.startTime, segment.endTime
+                    ]
+                )
+                summary.transcriptSegments += 1
+            }
+
+            return summary
         }
     }
 

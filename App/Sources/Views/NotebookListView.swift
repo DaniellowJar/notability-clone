@@ -4,11 +4,13 @@ import SwiftUI
 struct NotebookListView: View {
     @Environment(AppStore.self) private var app
     @State private var showingCreate = false
+    @State private var errorMessage: String?
+    @State private var path: [AnyHashable] = []
 
     private let palette = ["#5B8DEF", "#F0A64A", "#7CC576", "#E06060", "#9B7EDE", "#4AC7C7"]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 LazyVGrid(columns: Self.gridColumns, spacing: 16) {
                     notebookGrid
@@ -24,15 +26,29 @@ struct NotebookListView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityIdentifier("addNotebook")
                 }
             }
-            .navigationDestination(for: UUID.self) { notebookID in
-                RecordListView(notebookID: notebookID)
+            .navigationDestination(for: Notebook.self) { notebook in
+                RecordListView(notebookID: notebook.id, path: $path)
+            }
+            .navigationDestination(for: Record.self) { record in
+                RecordCanvasView(record: record)
             }
             .sheet(isPresented: $showingCreate) {
                 CreateNotebookView(palette: palette) { title, color in
-                    app.createNotebook(title: title, coverColorHex: color)
+                    do {
+                        let created = try app.createNotebook(title: title, coverColorHex: color)
+                        // Notability-style: land straight on a fresh canvas.
+                        path.append(created.record)
+                    } catch {
+                        errorMessage = "Could not create notebook: \(error.localizedDescription)"
+                    }
                 }
+            }
+            .alert("Error", isPresented: errorAlertBinding) {
+            } message: {
+                Text(errorMessage ?? "")
             }
         }
     }
@@ -41,11 +57,18 @@ struct NotebookListView: View {
 
     private var notebookGrid: some View {
         ForEach(app.notebooks) { notebook in
-            NavigationLink(value: notebook.id) {
+            NavigationLink(value: notebook) {
                 NotebookCoverView(notebook: notebook)
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
     }
 }
 
@@ -84,6 +107,7 @@ struct CreateNotebookView: View {
             Form {
                 Section("Title") {
                     TextField("Notebook name", text: $title)
+                        .accessibilityIdentifier("notebookTitle")
                 }
                 Section("Cover color") {
                     HStack(spacing: 12) {
@@ -114,6 +138,7 @@ struct CreateNotebookView: View {
                         dismiss()
                     }
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityIdentifier("createNotebook")
                 }
             }
         }

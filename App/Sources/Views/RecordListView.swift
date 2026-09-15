@@ -3,16 +3,18 @@ import SwiftUI
 
 struct RecordListView: View {
     let notebookID: UUID
+    @Binding var path: [AnyHashable]
 
     @Environment(AppStore.self) private var app
     @State private var records: [Record] = []
     @State private var showingCreate = false
     @State private var newTitle = ""
+    @State private var errorMessage: String?
 
     var body: some View {
         List {
             ForEach(records) { record in
-                NavigationLink(value: record.id) {
+                NavigationLink(value: record) {
                     HStack(spacing: 12) {
                         Image(systemName: "square.stack.3d.up")
                             .foregroundStyle(.tint)
@@ -28,7 +30,11 @@ struct RecordListView: View {
             }
             .onDelete { indexSet in
                 for index in indexSet {
-                    try? app.store.deleteRecord(records[index].id)
+                    do {
+                        try app.store.deleteRecord(records[index].id)
+                    } catch {
+                        errorMessage = "Could not delete record: \(error.localizedDescription)"
+                    }
                 }
                 reload()
             }
@@ -41,15 +47,14 @@ struct RecordListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier("addRecord")
             }
-        }
-        .navigationDestination(for: UUID.self) { recordID in
-            RecordCanvasView(recordID: recordID)
         }
         .sheet(isPresented: $showingCreate) {
             NavigationStack {
                 Form {
                     TextField("Record title", text: $newTitle)
+                        .accessibilityIdentifier("recordTitle")
                 }
                 .navigationTitle("New Record")
                 .toolbar {
@@ -58,18 +63,19 @@ struct RecordListView: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Create") {
-                            let title = newTitle.trimmingCharacters(in: .whitespaces)
-                            _ = try? app.store.createRecord(in: notebookID, title: title.isEmpty ? "Untitled" : title)
-                            newTitle = ""
-                            showingCreate = false
-                            reload()
+                            createRecord()
                         }
+                        .accessibilityIdentifier("createRecord")
                     }
                 }
             }
             .presentationDetents([.medium])
         }
         .onAppear(perform: reload)
+        .alert("Error", isPresented: errorAlertBinding) {
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private var navigationTitle: String {
@@ -81,7 +87,36 @@ struct RecordListView: View {
         do {
             records = try app.store.records(in: notebookID)
         } catch {
+            loggerError("reload failed", error)
             records = []
         }
+    }
+
+    private func createRecord() {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespaces)
+        do {
+            let record = try app.createRecord(in: notebookID, title: trimmed.isEmpty ? "Untitled" : trimmed)
+            newTitle = ""
+            showingCreate = false
+            reload()
+            // Notability-style: drop the user straight onto the new canvas.
+            path.append(record)
+        } catch {
+            errorMessage = "Could not create record: \(error.localizedDescription)"
+        }
+    }
+
+    private func loggerError(_ action: String, _ error: Error) {
+        // Kept separate so reload() can never re-trigger a view update loop.
+        #if DEBUG
+        print("RecordListView: \(action): \(error)")
+        #endif
+    }
+
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
     }
 }
