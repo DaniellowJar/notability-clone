@@ -50,35 +50,30 @@ final class NotabilityCloneUITests: XCTestCase {
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
 
-        // The create sheet must dismiss and the canvas must push.
+        // The create sheet must dismiss and the record list must push — not
+        // straight into a blank canvas with nothing to tap.
         XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
                        "create sheet should dismiss after tapping Create")
         XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
-        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Notability"),
-                      "creating a notebook should auto-open a canvas")
+        XCTAssertTrue(app.buttons["addRecord"].waitForExistence(timeout: 8),
+                      "creating a notebook should open its record list")
 
-        // 2. Back to the grid; the notebook persists.
-        app.navigationBars.firstMatch.buttons["Notability"].tap()
-        XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 5),
-                      "notebook should be visible in the grid")
-
-        // 3. Open it: the auto-created record must be in the list.
-        app.staticTexts["TestNB"].tap()
-        let bar = app.navigationBars.firstMatch
-        print("PROBE2 bar=\(bar.exists) navBtns=\(bar.buttons.count) btnLabels=[\(bar.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|"))] addRecord=\(app.buttons["addRecord"].exists) cells=\(app.cells.count) dbg=\(app.staticTexts["recordListDebug"].exists)")
-        if app.alerts.firstMatch.waitForExistence(timeout: 3) {
-            print("PROBE2 ALERT=\(app.alerts.firstMatch.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: "|"))")
-        }
-        print("HIER-BEGIN")
-        print(app.debugDescription)
-        print("HIER-END")
-        XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 5),
+        // 2. The auto-created record is listed.
+        XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 8),
                       "auto-created record must appear in the records list")
+
+        // 3. Open it → canvas; back returns to the list.
+        app.staticTexts["Untitled"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
+                      "tapping a record should push its canvas")
+        app.navigationBars.firstMatch.buttons["TestNB"].tap()
+        XCTAssertTrue(app.buttons["addRecord"].waitForExistence(timeout: 5),
+                      "backing out of a canvas should return to the record list")
 
         // 4. Create a named record → straight to its canvas.
         app.buttons["addRecord"].tap()
         let recordField = app.textFields["recordTitle"]
-        XCTAssertTrue(recordField.waitForExistence(timeout: 5), "record title field should appear")
+        XCTAssertTrue(recordField.waitForExistence(timeout: 8), "record title field should appear")
         recordField.tap()
         recordField.typeText("TestRec")
         app.buttons["createRecord"].tap()
@@ -94,8 +89,10 @@ final class NotabilityCloneUITests: XCTestCase {
 
         // 6. Record persists after leaving the notebook and re-entering.
         app.navigationBars.firstMatch.buttons["Notability"].tap()
+        XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 8),
+                      "notebook should be visible in the grid")
         app.staticTexts["TestNB"].tap()
-        XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 8),
                       "record must persist when re-entering the notebook")
 
         // 7. Swipe-to-delete the named record.

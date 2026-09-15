@@ -6,7 +6,7 @@ struct NotebookListView: View {
     @State private var showingCreate = false
     @State private var errorMessage: String?
     @State private var path: [Route] = []
-    @State private var pendingCanvasRecord: Record?
+    @State private var pendingNotebookID: UUID?
 
     private let palette = ["#5B8DEF", "#F0A64A", "#7CC576", "#E06060", "#9B7EDE", "#4AC7C7"]
 
@@ -44,20 +44,22 @@ struct NotebookListView: View {
                         let created = try app.createNotebook(title: title, coverColorHex: color)
                         // Push after the sheet is dismissed — NavigationStack drops
                         // path changes made while a sheet is still presented.
-                        pendingCanvasRecord = created.record
+                        pendingNotebookID = created.notebook.id
                     } catch {
                         errorMessage = "Could not create notebook: \(error.localizedDescription)"
                     }
                 }
             }
             .onChange(of: showingCreate) { _, dismissed in
-                guard !dismissed, let record = pendingCanvasRecord else { return }
-                pendingCanvasRecord = nil
+                guard !dismissed, let nbID = pendingNotebookID else { return }
+                pendingNotebookID = nil
                 Task { @MainActor in
                     // Let the sheet finish dismissing before pushing — path
                     // changes during the dismissal transition get dropped.
                     try? await Task.sleep(for: .milliseconds(450))
-                    path.append(.record(record))
+                    if let notebook = app.notebooks.first(where: { $0.id == nbID }) {
+                        path.append(.notebook(notebook))
+                    }
                 }
             }
             .alert("Error", isPresented: errorAlertBinding) {

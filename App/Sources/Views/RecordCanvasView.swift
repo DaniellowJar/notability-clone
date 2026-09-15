@@ -24,8 +24,27 @@ private struct PKCanvasContainer: UIViewRepresentable {
         canvas.drawingPolicy = .anyInput
         canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
         canvas.accessibilityIdentifier = "canvas"
+        context.coordinator.attach(to: canvas)
         return canvas
     }
 
     func updateUIView(_ uiView: PKCanvasView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Owns the shared `PKToolPicker` so it stays alive for the canvas lifetime.
+    final class Coordinator {
+        private var picker: PKToolPicker?
+
+        func attach(to canvas: PKCanvasView) {
+            let picker = PKToolPicker()
+            picker.addObserver(canvas)
+            picker.setVisible(true, forFirstResponder: canvas)
+            self.picker = picker
+            DispatchQueue.main.async {
+                canvas.becomeFirstResponder()
+                picker.setVisible(true, forFirstResponder: canvas)
+            }
+        }
+    }
 }
