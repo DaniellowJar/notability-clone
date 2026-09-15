@@ -46,12 +46,23 @@ private struct PKCanvasContainer: UIViewRepresentable {
     let onStateChange: (Int, Int) -> Void
 
     func makeUIView(context: Context) -> PKCanvasView {
-        let canvas = PKCanvasView()
+        let settings = AppSettings.shared
+        let canvas = CaptureCanvasView()
         canvas.backgroundColor = .systemBackground
-        canvas.drawingPolicy = .anyInput
+        // Touch paints until the first Pencil scribble locks it off (unless the
+        // user explicitly enabled finger painting — then it stays on).
+        canvas.drawingPolicy = CanvasInputPolicy.touchAllowedOnOpen(
+            allowFingerDrawing: settings.allowFingerDrawing,
+            touchLockedByPencil: settings.touchLockedByPencil
+        ) ? .anyInput : .pencilOnly
         canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
         canvas.accessibilityIdentifier = "canvas"
         canvas.delegate = context.coordinator
+        canvas.onPencilFirstUse = { [weak canvas] in
+            let lock = CanvasInputPolicy.shouldLockTouch(afterPencilUse: settings.allowFingerDrawing)
+            settings.touchLockedByPencil = lock
+            if lock { canvas?.drawingPolicy = .pencilOnly }
+        }
         context.coordinator.onStateChange = onStateChange
         context.coordinator.loadDrawing(into: canvas, store: store, recordID: recordID)
         context.coordinator.attach(to: canvas)
@@ -132,5 +143,20 @@ private struct PKCanvasContainer: UIViewRepresentable {
                 // Leave lastSavedStrokeCount unchanged so the debug label stays honest.
             }
         }
+    }
+}
+
+/// PKCanvasView subclass that detects the first Apple Pencil touch so the
+/// canvas can switch from `.anyInput` to `.pencilOnly` (touch painting off).
+/// Phase 3 grows this into the capture-only canvas the custom renderer reads.
+private final class CaptureCanvasView: PKCanvasView {
+    var onPencilFirstUse: (() -> Void)?
+    private var pencilSeen = false
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        guard !pencilSeen, touches.contains(where: { $0.type == .pencil }) else { return }
+        pencilSeen = true
+        onPencilFirstUse?()
     }
 }

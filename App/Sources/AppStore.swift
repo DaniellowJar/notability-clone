@@ -18,6 +18,7 @@ final class AppStore {
         // UI tests (XCUITest) launch with -inMemoryStore for a clean, isolated
         // database each run; normal launches use the sandboxed Documents file.
         if ProcessInfo.processInfo.arguments.contains("-inMemoryStore") {
+            AppSettings.shared.resetForTesting()
             do {
                 store = try NotabilityStore()
             } catch {
