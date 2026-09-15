@@ -3,6 +3,12 @@ import XCTest
 /// Reproduces the reported defect end to end: create notebook → land on a
 /// canvas, create a record → land on its canvas, both visible in the list,
 /// and deletable. Runs against an in-memory store on the iPad simulator.
+///
+/// iOS 26.2 simulator probe results (2025-09):
+/// - `navigationBars["Untitled"]` is NOT exposed for inline nav titles.
+/// - `PKCanvasView.accessibilityIdentifier = "canvas"` is NOT surfaced.
+/// - The only reliable pushed-screen signal is the back button whose label
+///   matches the *previous* screen's nav title (e.g. "Notability", "TestNB").
 final class NotabilityCloneUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -22,24 +28,15 @@ final class NotabilityCloneUITests: XCTestCase {
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
 
-        // The create sheet must dismiss...
+        // The create sheet must dismiss and the canvas must push.
         XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
                        "create sheet should dismiss after tapping Create")
         XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
-
-        // ...then a decision point: grid showing the notebook, vs a pushed canvas.
-        // A pushed canvas hides the grid (no TestNB) and adds a back button.
-        let navBar = app.navigationBars.firstMatch
-        print("State probe:") // matched by the workaround grep
-        print("  canvas=\(app.descendants(matching: .any).matching(identifier: "canvas").count)")
-        print("  navBar buttons=\(navBar.buttons.count) back=<\(navBar.buttons.firstMatch.label)>")
-        print("  navIds=[\(app.navigationBars.allElementsBoundByIndex.map(\.identifier).joined(separator: "|"))]")
-        print("  grid TestNB=\(app.staticTexts["TestNB"].exists) grid Notability=\(app.staticTexts["Notability"].exists)")
-        print("  Untitled bar=\(app.navigationBars["Untitled"].exists) text=\(app.staticTexts["Untitled"].exists)")
-
-        XCTAssertTrue(app.waitForCanvas(title: "Untitled"),
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Notability"),
                       "creating a notebook should auto-open a canvas")
-        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
+
+        // 2. Back to the grid; the notebook persists.
+        app.navigationBars.firstMatch.buttons["Notability"].tap()
         XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 5),
                       "notebook should be visible in the grid")
 
@@ -48,28 +45,30 @@ final class NotabilityCloneUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 5),
                       "auto-created record must appear in the records list")
 
-        // 5. Create a named record → straight to its canvas.
+        // 4. Create a named record → straight to its canvas.
         app.buttons["addRecord"].tap()
         let recordField = app.textFields["recordTitle"]
         XCTAssertTrue(recordField.waitForExistence(timeout: 5), "record title field should appear")
         recordField.tap()
         recordField.typeText("TestRec")
         app.buttons["createRecord"].tap()
-        XCTAssertTrue(app.waitForCanvas(title: "TestRec"),
+        XCTAssertFalse(app.textFields["recordTitle"].waitForExistence(timeout: 5),
+                       "create-record sheet should dismiss after tapping Create")
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "TestNB"),
                       "creating a record should push its canvas")
 
-        // 6. Back: both records are listed.
-        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
+        // 5. Back: both records are listed.
+        app.navigationBars.firstMatch.buttons["TestNB"].tap()
         XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Untitled"].exists)
 
-        // 7. Record persists after leaving the notebook and re-entering.
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        // 6. Record persists after leaving the notebook and re-entering.
+        app.navigationBars.firstMatch.buttons["Notability"].tap()
         app.staticTexts["TestNB"].tap()
         XCTAssertTrue(app.staticTexts["TestRec"].waitForExistence(timeout: 5),
                       "record must persist when re-entering the notebook")
 
-        // 8. Swipe-to-delete the named record.
+        // 7. Swipe-to-delete the named record.
         app.staticTexts["TestRec"].swipeLeft()
         app.buttons["Delete"].tap()
         XCTAssertFalse(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
@@ -77,16 +76,16 @@ final class NotabilityCloneUITests: XCTestCase {
 }
 
 private extension XCUIApplication {
-    /// The canvas is a UIKit view exposed to accessibility as "canvas"; its
-    /// navigation bar carries the record title. Accept either so the check
-    /// survives how UIKit/SwiftUI chooses to expose the view.
-    func waitForCanvas(title: String, timeout: TimeInterval = 8) -> Bool {
-        if navigationBars[title].waitForExistence(timeout: timeout) { return true }
-        // Fallback for simulators that expose the pushed screen without a
-        // titled bar element: a back button plus the record title somewhere.
-        let bar = navigationBars.firstMatch
-        if bar.buttons.count > 0 && staticTexts[title].exists { return true }
-        return descendants(matching: .any).matching(identifier: "canvas")
-            .firstMatch.waitForExistence(timeout: 1)
+    /// Waits for a pushed canvas by looking for a back button whose label
+    /// matches `backButtonLabel` (the previous screen's nav title). This is
+    /// the only reliable signal on iOS 26.2 where inline nav titles and
+    /// PKCanvasView accessibility identifiers are not exposed to XCUITest.
+    func waitForCanvas(backButtonLabel: String, timeout: TimeInterval = 8) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if navigationBars.firstMatch.buttons[backButtonLabel].exists { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        return false
     }
 }
