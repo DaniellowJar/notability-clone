@@ -10,6 +10,7 @@ struct RecordListView: View {
     @State private var showingCreate = false
     @State private var newTitle = ""
     @State private var errorMessage: String?
+    @State private var pendingCanvasRecord: Record?
 
     var body: some View {
         List {
@@ -72,6 +73,12 @@ struct RecordListView: View {
             .presentationDetents([.medium])
         }
         .onAppear(perform: reload)
+        .onChange(of: showingCreate) { _, dismissed in
+            if !dismissed, let record = pendingCanvasRecord {
+                path.append(record)
+                pendingCanvasRecord = nil
+            }
+        }
         .alert("Error", isPresented: errorAlertBinding) {
         } message: {
             Text(errorMessage ?? "")
@@ -97,10 +104,11 @@ struct RecordListView: View {
         do {
             let record = try app.createRecord(in: notebookID, title: trimmed.isEmpty ? "Untitled" : trimmed)
             newTitle = ""
-            showingCreate = false
             reload()
-            // Notability-style: drop the user straight onto the new canvas.
-            path.append(record)
+            // Push after the sheet is dismissed — NavigationStack drops
+            // path changes made while a sheet is still presented.
+            pendingCanvasRecord = record
+            showingCreate = false
         } catch {
             errorMessage = "Could not create record: \(error.localizedDescription)"
         }

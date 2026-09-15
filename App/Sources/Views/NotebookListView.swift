@@ -6,6 +6,7 @@ struct NotebookListView: View {
     @State private var showingCreate = false
     @State private var errorMessage: String?
     @State private var path: [AnyHashable] = []
+    @State private var pendingCanvasRecord: Record?
 
     private let palette = ["#5B8DEF", "#F0A64A", "#7CC576", "#E06060", "#9B7EDE", "#4AC7C7"]
 
@@ -39,11 +40,18 @@ struct NotebookListView: View {
                 CreateNotebookView(palette: palette) { title, color in
                     do {
                         let created = try app.createNotebook(title: title, coverColorHex: color)
-                        // Notability-style: land straight on a fresh canvas.
-                        path.append(created.record)
+                        // Push after the sheet is dismissed — NavigationStack drops
+                        // path changes made while a sheet is still presented.
+                        pendingCanvasRecord = created.record
                     } catch {
                         errorMessage = "Could not create notebook: \(error.localizedDescription)"
                     }
+                }
+            }
+            .onChange(of: showingCreate) { _, dismissed in
+                if !dismissed, let record = pendingCanvasRecord {
+                    path.append(record)
+                    pendingCanvasRecord = nil
                 }
             }
             .alert("Error", isPresented: errorAlertBinding) {

@@ -23,15 +23,13 @@ final class NotabilityCloneUITests: XCTestCase {
         app.buttons["createNotebook"].tap()
 
         // 2. Land straight on the auto-created canvas.
-        XCTAssertTrue(app.navigationBars["Untitled"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.waitForCanvas(title: "Untitled"),
                       "creating a notebook should auto-open a canvas")
-
-        // 3. Back to the grid; the notebook persists.
         app.navigationBars["Untitled"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["TestNB"].waitForExistence(timeout: 5),
                       "notebook should be visible in the grid")
 
-        // 4. Open it: the auto-created record must be in the list.
+        // 3. Open it: the auto-created record must be in the list.
         app.staticTexts["TestNB"].tap()
         XCTAssertTrue(app.staticTexts["Untitled"].waitForExistence(timeout: 5),
                       "auto-created record must appear in the records list")
@@ -43,7 +41,7 @@ final class NotabilityCloneUITests: XCTestCase {
         recordField.tap()
         recordField.typeText("TestRec")
         app.buttons["createRecord"].tap()
-        XCTAssertTrue(app.navigationBars["TestRec"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.waitForCanvas(title: "TestRec"),
                       "creating a record should push its canvas")
 
         // 6. Back: both records are listed.
@@ -61,5 +59,16 @@ final class NotabilityCloneUITests: XCTestCase {
         app.staticTexts["TestRec"].swipeLeft()
         app.buttons["Delete"].tap()
         XCTAssertFalse(app.staticTexts["TestRec"].waitForExistence(timeout: 5))
+    }
+}
+
+private extension XCUIApplication {
+    /// The canvas is a UIKit view exposed to accessibility as "canvas"; its
+    /// navigation bar carries the record title. Accept either so the check
+    /// survives how UIKit/SwiftUI chooses to expose the view.
+    func waitForCanvas(title: String, timeout: TimeInterval = 8) -> Bool {
+        if navigationBars[title].waitForExistence(timeout: timeout) { return true }
+        return descendants(matching: .any).matching(identifier: "canvas")
+            .firstMatch.waitForExistence(timeout: timeout)
     }
 }
