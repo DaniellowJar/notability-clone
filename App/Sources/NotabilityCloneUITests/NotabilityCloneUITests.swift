@@ -31,7 +31,7 @@ final class NotabilityCloneUITests: XCTestCase {
         // A pushed canvas hides the grid (no TestNB) and adds a back button.
         let navBar = app.navigationBars.firstMatch
         print("State probe:") // matched by the workaround grep
-        print("  canvas=\(descendants(matching: .any).matching(identifier: "canvas").count)")
+        print("  canvas=\(app.descendants(matching: .any).matching(identifier: "canvas").count)")
         print("  navBar buttons=\(navBar.buttons.count) back=<\(navBar.buttons.firstMatch.label)>")
         print("  navIds=[\(app.navigationBars.allElementsBoundByIndex.map(\.identifier).joined(separator: "|"))]")
         print("  grid TestNB=\(app.staticTexts["TestNB"].exists) grid Notability=\(app.staticTexts["Notability"].exists)")
