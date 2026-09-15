@@ -22,7 +22,13 @@ final class NotabilityCloneUITests: XCTestCase {
         notebookField.typeText("TestNB")
         app.buttons["createNotebook"].tap()
 
-        // 2. Land straight on the auto-created canvas.
+        // The create sheet must dismiss...
+        XCTAssertFalse(app.textFields["notebookTitle"].waitForExistence(timeout: 5),
+                       "create sheet should dismiss after tapping Create")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "creating should not raise an error alert")
+        // ...then land straight on the auto-created canvas.
+        let navIDs = app.navigationBars.allElementsBoundByIndex.map(\.identifier).joined(separator: ",")
+        print("DIAG sheetOpen=\(app.textFields["notebookTitle"].exists) gridHasTestNB=\(app.staticTexts["TestNB"].exists) navBars=[\(navIDs)]")
         XCTAssertTrue(app.waitForCanvas(title: "Untitled"),
                       "creating a notebook should auto-open a canvas")
         app.navigationBars["Untitled"].buttons.element(boundBy: 0).tap()

@@ -49,9 +49,13 @@ struct NotebookListView: View {
                 }
             }
             .onChange(of: showingCreate) { _, dismissed in
-                if !dismissed, let record = pendingCanvasRecord {
+                guard !dismissed, let record = pendingCanvasRecord else { return }
+                pendingCanvasRecord = nil
+                Task { @MainActor in
+                    // Let the sheet finish dismissing before pushing — path
+                    // changes during the dismissal transition get dropped.
+                    try? await Task.sleep(for: .milliseconds(450))
                     path.append(record)
-                    pendingCanvasRecord = nil
                 }
             }
             .alert("Error", isPresented: errorAlertBinding) {
