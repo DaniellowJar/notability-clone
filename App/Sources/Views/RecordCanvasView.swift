@@ -15,6 +15,7 @@ struct RecordCanvasView: View {
     @State private var savedStrokes = -1
     @State private var session = CanvasSessionState()
     @State private var inkStore = InkStrokeStore()
+    @State private var recognitionService: StrokeRecognitionService?
 
     var body: some View {
         GeometryReader { _ in
@@ -23,6 +24,7 @@ struct RecordCanvasView: View {
                     recordID: record.id,
                     store: app.store,
                     inkStore: inkStore,
+                    onStrokeCaptured: { recognitionService?.schedule() },
                     onStateChange: { strokes, saved in
                         visibleStrokes = strokes
                         savedStrokes = saved
@@ -59,9 +61,13 @@ struct RecordCanvasView: View {
         #endif
         .onAppear {
             session.load(recordID: record.id, store: app.store)
+            let service = StrokeRecognitionService(store: app.store, recordID: record.id, inkStore: inkStore)
+            recognitionService = service
+            service.schedule()
         }
         .onDisappear {
             session.flushPendingSaves()
+            recognitionService = nil
         }
         .alert("Error", isPresented: errorAlertBinding) {
         } message: {
@@ -95,6 +101,8 @@ private struct PKCanvasContainer: UIViewRepresentable {
     let recordID: UUID
     let store: NotabilityStore
     let inkStore: InkStrokeStore
+    /// Called after new strokes are captured & persisted (recognition trigger).
+    let onStrokeCaptured: () -> Void
     /// (visibleStrokes, savedStrokes) reported from the coordinator.
     let onStateChange: (Int, Int) -> Void
 
@@ -117,6 +125,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
             if lock { canvas?.drawingPolicy = .pencilOnly }
         }
         context.coordinator.onStateChange = onStateChange
+        context.coordinator.onStrokeCaptured = onStrokeCaptured
         context.coordinator.loadDrawing(into: canvas, store: store, recordID: recordID, inkStore: inkStore)
         context.coordinator.attach(to: canvas)
         return canvas
@@ -124,6 +133,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
 
     func updateUIView(_ uiView: PKCanvasView, context: Context) {
         context.coordinator.onStateChange = onStateChange
+        context.coordinator.onStrokeCaptured = onStrokeCaptured
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -134,6 +144,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
     /// opaque ink view, so this is the single source of truth for the renderer.
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var onStateChange: ((Int, Int) -> Void)?
+        var onStrokeCaptured: (() -> Void)?
 
         private var picker: PKToolPicker?
         private weak var canvas: PKCanvasView?
@@ -182,6 +193,7 @@ private struct PKCanvasContainer: UIViewRepresentable {
                 inkStore.append(newStrokes)
                 persist(added: newStrokes)
                 capturedCount = all.count
+                onStrokeCaptured?()
             } else if all.count < capturedCount {
                 let removedCount = capturedCount - all.count
                 inkStore.truncate(to: all.count)

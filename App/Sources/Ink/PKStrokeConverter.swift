@@ -6,7 +6,10 @@ import PencilKit
 /// (b) rebuild the PKCanvasView's drawing on open so undo/diff stay consistent.
 enum PKStrokeConverter {
     static func strokeData(from stroke: PKStroke) -> StrokeData {
-        let points = stroke.path.interpolatedPoints(by: .parametric).map { sample in
+        // PKStrokePath is a Collection of PKStrokePoint — read the control
+        // points directly (no interpolation strategy to depend on).
+        let samples = Array(stroke.path)
+        let points = samples.map { sample in
             StrokePoint(
                 location: Point(x: Double(sample.location.x), y: Double(sample.location.y)),
                 timestampOffset: sample.timeOffset,
@@ -16,11 +19,13 @@ enum PKStrokeConverter {
                 altitude: sample.altitude
             )
         }
-        return StrokeData(
-            points: points,
-            colorHex: UIColor(ciColor: stroke.ink.color).hexString,
-            baseWidth: Double(stroke.ink.width)
+        let ci = stroke.ink.color
+        let color = UIColor(
+            red: CGFloat(ci.red), green: CGFloat(ci.green),
+            blue: CGFloat(ci.blue), alpha: CGFloat(ci.alpha)
         )
+        let baseWidth = Double(samples.map { $0.size.width }.max() ?? 3)
+        return StrokeData(points: points, colorHex: color.hexString, baseWidth: baseWidth)
     }
 
     static func stroke(from data: StrokeData) -> PKStroke {
