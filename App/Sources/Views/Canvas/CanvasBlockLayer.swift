@@ -23,7 +23,7 @@ private struct CanvasBlockView: View {
     @Bindable var session: CanvasSessionState
     let block: CanvasBlock
     let isSelected: Bool
-    @State private var dragStart: Point?
+    @State private var lastDragLocation: CGPoint?
 
     var body: some View {
         content
@@ -70,19 +70,25 @@ private struct CanvasBlockView: View {
     }
 
     private var moveGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
+        // Use location deltas in a fixed named space ("canvas"): a DragGesture's
+        // `translation` double-counts when the dragged view itself moves under
+        // the finger, which made blocks jitter back and forth.
+        DragGesture(minimumDistance: 10, coordinateSpace: .named("canvas"))
             .onChanged { value in
                 guard isSelected else { return }
-                if dragStart == nil { dragStart = block.frame.origin }
-                let start = dragStart ?? block.frame.origin
+                if lastDragLocation == nil { lastDragLocation = value.location }
+                guard let last = lastDragLocation else { return }
+                let dx = value.location.x - last.x
+                let dy = value.location.y - last.y
+                lastDragLocation = value.location
+                let current = block.frame.origin
                 session.moveBlock(
                     id: block.id,
-                    to: Point(x: max(0, start.x + value.translation.width),
-                              y: max(0, start.y + value.translation.height))
+                    to: Point(x: max(0, current.x + dx), y: max(0, current.y + dy))
                 )
             }
             .onEnded { _ in
-                dragStart = nil
+                lastDragLocation = nil
                 session.finishMoveBlock(id: block.id)
             }
     }

@@ -1,5 +1,4 @@
 import NotabilityCore
-import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -16,7 +15,7 @@ struct CanvasToolbarView: View {
     var onExtractPDF: (UUID) -> Void = { _ in }
     var onRemoveBackground: (UUID) -> Void = { _ in }
 
-    @State private var photosItem: PhotosPickerItem?
+    @State private var showPhotoLibrary = false
     @State private var showCamera = false
     @State private var showImporter = false
     @State private var cameraError: String?
@@ -59,13 +58,7 @@ struct CanvasToolbarView: View {
     private var insertTools: some View {
         HStack(spacing: 2) {
             ToolButton(title: "T", id: "toolText") { session.startTextTool() }
-            PhotosPicker(selection: $photosItem, matching: .images) {
-                Image(systemName: "photo")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityIdentifier("toolPhoto")
+            ToolButton(systemImage: "photo", id: "toolPhoto") { showPhotoLibrary = true }
             ToolButton(systemImage: "camera", id: "toolCamera") { openCamera() }
             ToolButton(systemImage: "doc", id: "toolPDF") { showImporter = true }
             ToolButton(systemImage: "lasso", id: "toolSelect") { session.startSelectTool() }
@@ -76,10 +69,14 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "waveform", id: "toolTranscript") { onShowTranscript() }
             ToolButton(systemImage: "list.number", id: "toolQuiz") { onShowQuiz() }
         }
-        .onChange(of: photosItem) { _, item in
-            guard let item else { return }
-            photosItem = nil
-            Task { await handle(photosItem: item) }
+        .sheet(isPresented: $showPhotoLibrary) {
+            PhotoLibraryPicker { image in
+                if let data = image.jpegData(compressionQuality: 0.9), let ref = saveImage(data) {
+                    session.startPlaceImage(ref: ref)
+                } else {
+                    session.errorMessage = "Could not store the photo"
+                }
+            }
         }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf]) { result in
             handle(pdfImport: result)
@@ -153,18 +150,6 @@ struct CanvasToolbarView: View {
     }
 
     // MARK: - Pickers → blobs
-
-    private func handle(photosItem: PhotosPickerItem) async {
-        guard let data = try? await photosItem.loadTransferable(type: Data.self) else {
-            session.errorMessage = "Could not load the selected photo"
-            return
-        }
-        guard let ref = saveImage(data) else {
-            session.errorMessage = "Could not store the photo"
-            return
-        }
-        session.startPlaceImage(ref: ref)
-    }
 
     private func handle(pdfImport result: Result<URL, Error>) {
         switch result {

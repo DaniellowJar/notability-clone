@@ -48,6 +48,7 @@ struct RecordCanvasView: View {
                         .allowsHitTesting(false)
                 }
             }
+            .coordinateSpace(.named("canvas"))
         }
         .ignoresSafeArea(edges: .bottom)
         .navigationTitle(record.title)
@@ -237,10 +238,10 @@ final class CanvasViewController: UIViewController {
         coordinator.reloadFromStore()
     }
 
-    /// Capture coordinator: migrates any legacy drawing blob, loads existing
-    /// stroke blocks as the renderer baseline, diffs newly completed strokes,
-    /// and persists each as a `.stroke` block. Native ink is hidden beneath the
-    /// opaque ink view, so this is the single source of truth for the renderer.
+    /// Capture coordinator: renders the FULL live drawing (including the
+    /// in-progress stroke, so ink appears while you paint) and persists each
+    /// stroke as a `.stroke` block when it completes. Native ink is hidden
+    /// beneath the opaque ink view, so this is the single source of truth.
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var onStateChange: ((Int, Int) -> Void)?
         var onStrokeCaptured: (() -> Void)?
@@ -250,7 +251,11 @@ final class CanvasViewController: UIViewController {
         private var recordID: UUID?
         private var store: NotabilityStore?
         private var inkStore: InkStrokeStore?
-        private var capturedCount = 0
+        /// Strokes persisted as `.stroke` blocks (only completed strokes).
+        private var persistedCount = 0
+        /// Strokes currently rendered (mirrors the live PKCanvasView drawing).
+        private var rendered: [StrokeData] = []
+        private var renderedCount = 0
 
         func loadDrawing(into canvas: PKCanvasView, store: NotabilityStore, recordID: UUID, inkStore: InkStrokeStore) {
             self.canvas = canvas
@@ -263,9 +268,8 @@ final class CanvasViewController: UIViewController {
         }
 
         /// Re-reads stroke blocks from the store and reconciles the ink store,
-        /// the hidden canvas drawing, and the reported debug counts. Safe on
-        /// every appear: during active drawing the captured count matches the
-        /// store (persisted at capture), so nothing is wiped.
+        /// the hidden canvas drawing, and the reported counts. Safe on every
+        /// appear: during active drawing the persisted count matches the store.
         func reloadFromStore() {
             guard let store, let recordID, let canvas else { return }
             let strokeBlocks = (try? store.strokeBlocks(in: recordID)) ?? []
@@ -273,12 +277,14 @@ final class CanvasViewController: UIViewController {
                 guard case .stroke(let list, _, _) = block.payload, let first = list.first else { return nil }
                 return first
             }
-            if strokes.count != capturedCount {
+            if strokes.count != persistedCount {
+                rendered = strokes
+                renderedCount = strokes.count
+                persistedCount = strokes.count
                 inkStore?.load(strokes)
-                capturedCount = strokes.count
                 canvas.drawing = PKStrokeConverter.drawing(from: strokes)
             }
-            onStateChange?(canvas.drawing.strokes.count, capturedCount)
+            onStateChange?(canvas.drawing.strokes.count, persistedCount)
         }
 
         func attach(to canvas: PKCanvasView) {
@@ -292,22 +298,49 @@ final class CanvasViewController: UIViewController {
             }
         }
 
+        /// Fires continuously while drawing: keep the rendered set in sync with
+        /// the live drawing (the in-progress stroke included) so the user sees
+        /// ink while they paint. Persistence happens on stroke completion.
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard let inkStore else { return }
             let all = canvasView.drawing.strokes
-            if all.count > capturedCount {
-                let newStrokes = all[capturedCount...].map(PKStrokeConverter.strokeData)
-                inkStore.append(newStrokes)
-                persist(added: newStrokes)
-                capturedCount = all.count
-                onStrokeCaptured?()
-            } else if all.count < capturedCount {
-                let removedCount = capturedCount - all.count
-                inkStore.truncate(to: all.count)
-                removeLastStrokeBlocks(removedCount)
-                capturedCount = all.count
+            updateRendered(from: all)
+            if all.count < persistedCount {
+                removeLastStrokeBlocks(persistedCount - all.count)
+                persistedCount = all.count
             }
-            onStateChange?(all.count, capturedCount)
+            onStateChange?(all.count, persistedCount)
+        }
+
+        /// The user lifted the tool: the in-progress stroke is now final —
+        /// persist any strokes beyond what we've already stored.
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            persistCompleted(from: canvasView.drawing.strokes)
+        }
+
+        private func updateRendered(from all: [PKStroke]) {
+            guard let inkStore else { return }
+            if all.count > renderedCount {
+                let new = all[renderedCount...].map(PKStrokeConverter.strokeData)
+                rendered.append(contentsOf: new)
+                renderedCount = all.count
+            } else if all.count < renderedCount {
+                rendered = Array(rendered.prefix(all.count))
+                renderedCount = all.count
+            } else if !all.isEmpty {
+                // Same count but the last stroke is in progress — re-render it.
+                rendered[all.count - 1] = PKStrokeConverter.strokeData(all[all.count - 1])
+            }
+            inkStore.load(rendered)
+        }
+
+        private func persistCompleted(from all: [PKStroke]) {
+            guard let store, let recordID else { return }
+            guard all.count > persistedCount else { return }
+            let newStrokes = all[persistedCount...].map(PKStrokeConverter.strokeData)
+            persist(added: newStrokes)
+            persistedCount = all.count
+            onStrokeCaptured?()
+            onStateChange?(all.count, persistedCount)
         }
 
         private func persist(added strokes: [StrokeData]) {

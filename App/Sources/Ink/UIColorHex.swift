@@ -22,10 +22,21 @@ extension UIColor {
         self.init(red: r, green: g, blue: b, alpha: a)
     }
 
-    /// "#RRGGBB" (alpha dropped).
+    /// "#RRGGBB" (alpha dropped). Resolves dynamic colors (e.g. `.label`)
+    /// against the current trait collection — `getRed` returns `false` for
+    /// dynamic colors and left the hex as garbage, making default ink
+    /// invisible or wrong-colored on-device.
     var hexString: String {
+        let resolved = resolvedColor(with: UITraitCollection.current)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        getRed(&r, green: &g, blue: &b, alpha: &a)
-        return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+        if resolved.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+        }
+        if let components = resolved.cgColor
+            .converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil)?.components,
+           components.count >= 3 {
+            return String(format: "#%02X%02X%02X", Int(components[0] * 255), Int(components[1] * 255), Int(components[2] * 255))
+        }
+        return "#000000"
     }
 }
