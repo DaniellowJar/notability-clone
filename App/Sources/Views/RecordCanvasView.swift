@@ -328,7 +328,7 @@ final class CanvasViewController: UIViewController {
                 renderedCount = all.count
             } else if !all.isEmpty {
                 // Same count but the last stroke is in progress — re-render it.
-                rendered[all.count - 1] = PKStrokeConverter.strokeData(all[all.count - 1])
+                rendered[all.count - 1] = PKStrokeConverter.strokeData(from: all[all.count - 1])
             }
             inkStore.load(rendered)
         }
