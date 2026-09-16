@@ -170,7 +170,13 @@ final class NotabilityCloneUITests: XCTestCase {
         let toggle = app.switches["fingerPaintingToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 8),
                       "finger toggle should appear in Settings")
-        toggle.tap()
+        // Tap the switch control itself (row trailing edge) — tapping the row
+        // center can miss the control on iPad Form layouts.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let deadline = Date().addingTimeInterval(3)
+        while (toggle.value as? String) != "1", Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
         XCTAssertEqual(toggle.value as? String, "1", "toggle must switch on")
         app.navigationBars.firstMatch.buttons["Done"].tap()
 

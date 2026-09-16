@@ -43,17 +43,27 @@ final class LetterModeV2Tests: XCTestCase {
         session.letterLineStartCount = 0
         session.commitLetterLine()
 
-        // Same two blocks (stable IDs/counts so undo math holds), each ~12px.
+        // Same two blocks (stable IDs/counts so undo math holds), uniformly
+        // scaled so the line union is ~12px tall (proportions preserved).
         let strokes = try store.strokeBlocks(in: recordID)
         XCTAssertEqual(strokes.count, 2)
         XCTAssertEqual(Set(strokes.map(\.id)), [a.id, b.id])
+        var union = Rect.zero
+        var first = true
         for block in strokes {
             guard case .stroke(let list, _, _) = block.payload, let s = list.first else {
                 return XCTFail("expected stroke payload")
             }
-            XCTAssertEqual(s.bounds.size.height, 12, accuracy: 0.001)
+            union = first ? s.bounds : Rect.union(union, s.bounds)
+            first = false
             XCTAssertGreaterThanOrEqual(s.bounds.minX, 0)
         }
+        XCTAssertEqual(union.size.height, 12, accuracy: 0.001)
+        let bHeight = strokes.first { $0.id == b.id }.flatMap { block -> Double? in
+            guard case .stroke(let list, _, _) = block.payload else { return nil }
+            return list.first?.bounds.size.height
+        }
+        XCTAssertEqual(bHeight ?? -1, 10.5, accuracy: 0.001, "35px stroke scaled by 12/40")
         XCTAssertEqual(session.drawingRewriteToken, 1, "canvas must rebuild from the store")
         XCTAssertEqual(session.letterCursorY, 90 + 12 + 8, accuracy: 1e-9)
         XCTAssertEqual(session.letterLineStartCount, 2)
