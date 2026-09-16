@@ -94,7 +94,7 @@ struct RecordCanvasView: View {
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count) zoom=\(String(format: "%.2f", session.transform.scale)) texture=\(session.pageTexture.rawValue)")
+            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count) zoom=\(String(format: "%.2f", session.transform.scale)) texture=\(session.pageTexture.rawValue) live=\(inkStore.liveStroke?.colorHex ?? "nil")")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .allowsHitTesting(false)
@@ -398,6 +398,26 @@ final class CanvasViewController: UIViewController {
             }
         }
 
+        /// Snapshot the live tool's color/width against the canvas's own
+        /// traits. Same lesson as the normal-mode hex fix (dynamic `.label`
+        /// must be resolved, not read raw) but scoped to `canvas.traitCollection`:
+        /// the ambient `UITraitCollection.current` is wrong during touch
+        /// dispatch, which is what turned white picker ink black in Letter Mode.
+        private func snapshotLiveTool(from canvas: PKCanvasView) {
+            if let ink = canvas.tool as? PKInkingTool {
+                liveColorHex = ink.color.hexString(resolvedWith: canvas.traitCollection)
+                liveWidth = Double(ink.width)
+            }
+        }
+
+        /// Reliable stroke-begin signal from PencilKit — fires even when touch
+        /// delivery is delayed, so a new stroke never inherits a previous
+        /// stroke's points or its stale `#000000` default color.
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            livePoints = []
+            snapshotLiveTool(from: canvasView)
+        }
+
         /// Live touch path for the in-progress stroke preview, so ink appears
         /// while painting even under the opaque letter layer. Pencil always
         /// draws; finger only when the policy allows touch.
@@ -408,22 +428,23 @@ final class CanvasViewController: UIViewController {
                 inkStore?.clearLiveStroke()
                 return
             }
-            let drawable = type == .pencil || canvas.drawingPolicy == .anyInput
-            guard drawable else { return }
+            // End-of-stroke always resets, even for non-drawing touches —
+            // otherwise the next stroke inherits stale points/color.
             if ended {
                 livePoints = []
                 liveTracking = false
                 inkStore?.clearLiveStroke()
                 return
             }
+            let drawable = type == .pencil || canvas.drawingPolicy == .anyInput
+            guard drawable else { return }
             if !liveTracking {
                 liveTracking = true
                 livePoints = []
-                if let ink = canvas.tool as? PKInkingTool {
-                    liveColorHex = ink.color.hexString
-                    liveWidth = Double(ink.width)
-                }
             }
+            // Refresh every event, not just at stroke start: the picker can
+            // change mid-stroke and per-event sampling can't go stale.
+            snapshotLiveTool(from: canvas)
             livePoints.append(point)
             // Touch streams can exceed display refresh; throttle preview pushes.
             let now = CFAbsoluteTimeGetCurrent()
@@ -457,6 +478,11 @@ final class CanvasViewController: UIViewController {
         /// (no-op when `persistedCount` is already current).
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             persistCompleted(from: canvasView.drawing.strokes)
+            // Safety: touches don't always arrive (the "line only on lift"
+            // case) — never leave a stale preview or tracking flag behind.
+            livePoints = []
+            liveTracking = false
+            inkStore?.clearLiveStroke()
         }
 
         private func updateRendered(from all: [PKStroke]) {

@@ -27,7 +27,16 @@ extension UIColor {
     /// dynamic colors and left the hex as garbage, making default ink
     /// invisible or wrong-colored on-device.
     var hexString: String {
-        let resolved = resolvedColor(with: UITraitCollection.current)
+        hexString(resolvedWith: UITraitCollection.current)
+    }
+
+    /// Same as `hexString`, but resolved against an explicit trait collection.
+    /// Prefer this with the canvas's own traits (`canvas.traitCollection`)
+    /// from touch/delegate callbacks: the ambient
+    /// `UITraitCollection.current` is unreliable during touch dispatch and
+    /// misresolved white picker ink as black in Letter Mode.
+    func hexString(resolvedWith traits: UITraitCollection) -> String {
+        let resolved = resolvedColor(with: traits)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         if resolved.getRed(&r, green: &g, blue: &b, alpha: &a) {
             return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
