@@ -39,7 +39,7 @@ final class LetterModeV2Tests: XCTestCase {
                                    frame: Rect(x: 35, y: 105, width: 20, height: 35))
 
         session.letterArea = Rect(x: 0, y: 90, width: 200, height: 100)
-        session.letterCursorY = 90
+        session.letterCursor = Point(x: 0, y: 90)
         session.letterLineStartCount = 0
         session.commitLetterLine()
 
