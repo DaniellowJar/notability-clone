@@ -83,10 +83,10 @@ final class ZoomPanHostView: UIView {
     /// Only handle gestures fully inside the canvas viewport with no modal
     /// sheet up (a sheet means the user's attention is elsewhere).
     private func shouldHandle(_ gesture: UIGestureRecognizer) -> Bool {
-        guard let window = gesture.view, gesture.numberOfTouches == 2 else { return false }
-        var top: UIViewController? = window.windowScene?.keyWindow?.rootViewController
+        guard gesture.numberOfTouches == 2, let window = self.window else { return false }
+        var top = window.rootViewController
         while let presented = top?.presentedViewController { top = presented }
-        if top != window.windowScene?.keyWindow?.rootViewController { return false }
+        if top != window.rootViewController { return false }
         for i in 0..<2 {
             let p = gesture.location(ofTouch: i, in: self)
             guard bounds.contains(p) else { return false }

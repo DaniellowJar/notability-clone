@@ -150,14 +150,14 @@ struct CanvasToolbarView: View {
     private var modeHint: String? {
         if session.letterArea != nil { return "Write big — the camera follows · Done to finish" }
         switch session.mode {
-        case .draw: nil
-        case .areaSelect(.newTextBlock): "Drag to create a text block"
-        case .areaSelect(.selectBlocks): "Drag or tap to select a block"
-        case .areaSelect(.letterArea): "Drag to select the letter area"
-        case .tapToPlace(.image): "Tap the canvas to place the image"
-        case .tapToPlace(.pdf): "Tap the canvas to place the PDF"
-        case .tapToPlace(.calc): "Tap the canvas to place the calculator"
-        case .editingBlock: "Tap a block to select · drag to move · Done to finish"
+        case .draw: return nil
+        case .areaSelect(.newTextBlock): return "Drag to create a text block"
+        case .areaSelect(.selectBlocks): return "Drag or tap to select a block"
+        case .areaSelect(.letterArea): return "Drag to select the letter area"
+        case .tapToPlace(.image): return "Tap the canvas to place the image"
+        case .tapToPlace(.pdf): return "Tap the canvas to place the PDF"
+        case .tapToPlace(.calc): return "Tap the canvas to place the calculator"
+        case .editingBlock: return "Tap a block to select · drag to move · Done to finish"
         }
     }
 
