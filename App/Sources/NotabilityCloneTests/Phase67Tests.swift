@@ -44,12 +44,13 @@ final class Phase67Tests: XCTestCase {
         XCTAssertEqual(session.blocks[0].calcResult ?? "", "", "no local result for complex math")
     }
 
-    func testLetterModeToggles() {
+    func testLetterAreaEntryAndExit() {
         let session = CanvasSessionState()
         session.load(recordID: recordID, store: store)
-        XCTAssertFalse(session.letterMode)
-        session.toggleLetterMode()
-        XCTAssertTrue(session.letterMode)
+        session.startLetterArea()
+        XCTAssertEqual(session.mode, .areaSelect(.letterArea))
+        session.exitLetterMode()
+        XCTAssertNil(session.letterArea)
     }
 
     func testStubMathOCRIsAvailableAndDeterministic() async throws {

@@ -159,6 +159,96 @@ final class NotabilityCloneUITests: XCTestCase {
                       "text block must persist across re-entry")
     }
 
+    func testFingerPaintingToggleEnablesTouchDrawing() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore"]
+        app.launch()
+
+        // 1. Open Settings from the root toolbar and turn finger drawing on.
+        // (Each launch resets preferences, so the toggle starts OFF.)
+        app.buttons["settingsButton"].tap()
+        let toggle = app.switches["fingerPaintingToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 8),
+                      "finger toggle should appear in Settings")
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "1", "toggle must switch on")
+        app.navigationBars.firstMatch.buttons["Done"].tap()
+
+        // 2. Notebook → New Page → canvas.
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
+        let notebookField = app.textFields["notebookTitle"]
+        notebookField.tap()
+        notebookField.typeText("Fingers")
+        app.buttons["createNotebook"].tap()
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8))
+        app.buttons["addPage"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Fingers"))
+
+        // 3. A finger drag must register a stroke (touch drawing allowed).
+        drawStroke(in: app)
+        XCTAssertTrue(app.waitForDebug(label: "strokes=1", timeout: 5),
+                      "finger drag must draw when the toggle is on")
+    }
+
+    func testPageHeaderAndPinchZoom() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore"]
+        app.launch()
+
+        // Notebook → New Page → canvas.
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
+        let notebookField = app.textFields["notebookTitle"]
+        notebookField.tap()
+        notebookField.typeText("Zoom")
+        app.buttons["createNotebook"].tap()
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8))
+        app.buttons["addPage"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Zoom"))
+
+        // 1. The creation-date header is pinned at the top of the page.
+        XCTAssertTrue(app.staticTexts["pageHeader"].waitForExistence(timeout: 5),
+                      "page header should show the creation date")
+
+        // 2. Pinch in → the debug label must report a zoom above 1.00.
+        // (Pinch is centered on the debug label; both fingers land inside the
+        // viewport so the canvas zoom recognizer picks it up.)
+        app.staticTexts["canvasDebug"].pinch(withScale: 2.5, velocity: 1.0)
+        XCTAssertTrue(app.waitForZoomChanged(timeout: 10),
+                      "pinch must change the canvas zoom")
+    }
+
+    func testLetterModeZoomToFit() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore"]
+        app.launch()
+
+        // Notebook → New Page → canvas.
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
+        let notebookField = app.textFields["notebookTitle"]
+        notebookField.tap()
+        notebookField.typeText("Letter")
+        app.buttons["createNotebook"].tap()
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8))
+        app.buttons["addPage"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Letter"))
+
+        // Letter tool → marquee an area → canvas zooms to fit it across
+        // the screen (debug zoom leaves 1.00). Commit math is unit-tested;
+        // here we verify the marquee→zoom wiring end to end.
+        app.buttons["toolLetter"].tap()
+        let marqueeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.35))
+        let marqueeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.45))
+        marqueeStart.press(forDuration: 0.05, thenDragTo: marqueeEnd)
+        XCTAssertTrue(app.waitForZoomChanged(timeout: 10),
+                      "letter marquee must zoom to fit the area")
+    }
+
     /// Reveals the row's Delete action and taps it. A short right-to-left drag
     /// is used on purpose: a full-row swipe triggers iOS's full-swipe delete,
     /// which removes the row without a Delete button ever appearing (and this
@@ -213,6 +303,24 @@ private extension XCUIApplication {
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         }
         print("DEBUG-never-contained=\(substring) label=\(debug.label)")
+        return false
+    }
+
+    /// Polls the DEBUG canvas label until the zoom differs from 1.00 — how
+    /// pinch zoom is verified from XCUITest (pixel scale isn't readable).
+    func waitForZoomChanged(timeout: TimeInterval = 10) -> Bool {
+        let debug = staticTexts["canvasDebug"]
+        guard debug.waitForExistence(timeout: 3) else {
+            print("DEBUG-label-missing")
+            print(debugDescription)
+            return false
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !debug.label.contains("zoom=1.00") { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        print("DEBUG-zoom-never-changed label=\(debug.label)")
         return false
     }
 }

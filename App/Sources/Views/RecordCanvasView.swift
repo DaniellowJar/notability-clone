@@ -23,33 +23,57 @@ struct RecordCanvasView: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                PKCanvasContainer(
-                    recordID: record.id,
-                    store: app.store,
-                    inkStore: inkStore,
-                    onStrokeCaptured: { recognitionService?.schedule() },
-                    onStateChange: { strokes, saved in
-                        visibleStrokes = strokes
-                        savedStrokes = saved
-                    }
-                )
-                .allowsHitTesting(session.mode.allowsInkHitTesting)
-                InkRenderView(strokes: inkStore.strokes, style: .letterMode)
-                    .allowsHitTesting(false)
-                    .opacity(session.letterMode ? 1 : 0)
-
-                captureOverlay
-
-                CanvasBlockLayer(session: session)
-                    .allowsHitTesting(session.mode.allowsBlockHitTesting)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if session.letterMode {
-                    LetterModeIndicatorView(strokes: inkStore.strokes, canvasWidth: proxy.size.width)
+                Color(.systemGroupedBackground)
+                // Page container: fixed content size in canvas points, scaled
+                // and panned by the session transform. Everything inside uses
+                // canvas coordinates; gestures inverse-map through it.
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.systemBackground))
+                        .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color(.separator), lineWidth: 1 / CGFloat(max(session.transform.scale, 0.01)))
+                        .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                    PageHeaderView(record: record, format: session.headerFormat)
+                        .frame(width: CGFloat(session.contentWidth), height: PageHeaderView.height)
+                    PKCanvasContainer(
+                        recordID: record.id,
+                        store: app.store,
+                        inkStore: inkStore,
+                        rewriteToken: session.drawingRewriteToken,
+                        onStrokeCaptured: { recognitionService?.schedule() },
+                        onStateChange: { strokes, saved in
+                            visibleStrokes = strokes
+                            savedStrokes = saved
+                            growContent()
+                            if session.letterArea != nil,
+                               let pt = inkStore.strokes.last?.points.last {
+                                session.trackLetterWriting(x: pt.location.x, y: pt.location.y)
+                            }
+                        }
+                    )
+                    .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                    .allowsHitTesting(session.mode.allowsInkHitTesting)
+                    InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal)
+                        .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                         .allowsHitTesting(false)
+                        .opacity(session.letterArea != nil ? 1 : 0)
+
+                    captureOverlay
+
+                    CanvasBlockLayer(session: session)
+                        .allowsHitTesting(session.mode.allowsBlockHitTesting)
                 }
+                .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                .scaleEffect(CGFloat(session.transform.scale), anchor: .topLeading)
+                .offset(x: CGFloat(session.transform.offsetX), y: CGFloat(session.transform.offsetY))
+                .coordinateSpace(.named("canvas"))
+                ZoomPanOverlay(session: session)
             }
-            .coordinateSpace(.named("canvas"))
+            .clipped()
+            .onAppear { configureViewport(proxy.size) }
+            .onChange(of: proxy.size) { _, size in configureViewport(size) }
+            .onChange(of: session.blocks) { growContent() }
         }
         .ignoresSafeArea(edges: .bottom)
         .navigationTitle(record.title)
@@ -68,7 +92,7 @@ struct RecordCanvasView: View {
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count)")
+            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count) zoom=\(String(format: "%.2f", session.transform.scale))")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .allowsHitTesting(false)
@@ -122,6 +146,19 @@ struct RecordCanvasView: View {
         )
     }
 
+    private func configureViewport(_ size: CGSize) {
+        session.configureViewport(Size(width: Double(size.width), height: Double(size.height)))
+        growContent()
+    }
+
+    /// Grow the page below the lowest block or stroke so writing never runs
+    /// off the bottom. Idempotent; safe to call on every content change.
+    private func growContent() {
+        let blocksBottom = session.blocks.map(\.frame.maxY).max() ?? 0
+        let strokesBottom = inkStore.strokes.map(\.bounds.maxY).max() ?? 0
+        session.ensureContentHeight(bottom: max(blocksBottom, strokesBottom))
+    }
+
     // MARK: - Audio / transcript / PDF / quiz actions
 
     private func toggleRecording() {
@@ -169,6 +206,9 @@ private struct PKCanvasContainer: UIViewControllerRepresentable {
     let recordID: UUID
     let store: NotabilityStore
     let inkStore: InkStrokeStore
+    /// Bumped by the session after out-of-band store edits (letter commit);
+    /// the coordinator rebuilds the live drawing when it changes.
+    let rewriteToken: Int
     /// Called after new strokes are captured & persisted (recognition trigger).
     let onStrokeCaptured: () -> Void
     /// (visibleStrokes, savedStrokes) reported from the coordinator.
@@ -184,6 +224,10 @@ private struct PKCanvasContainer: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: CanvasViewController, context: Context) {
         uiViewController.coordinator.onStateChange = onStateChange
         uiViewController.coordinator.onStrokeCaptured = onStrokeCaptured
+        if uiViewController.coordinator.lastRewriteToken != rewriteToken {
+            uiViewController.coordinator.lastRewriteToken = rewriteToken
+            uiViewController.coordinator.rewriteDrawingFromStore()
+        }
     }
 }
 
@@ -232,11 +276,29 @@ final class CanvasViewController: UIViewController {
         super.viewDidLoad()
         coordinator.loadDrawing(into: canvas, store: store, recordID: recordID, inkStore: inkStore)
         coordinator.attach(to: canvas)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applyFingerDrawingPolicy),
+            name: .fingerDrawingChanged, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        applyFingerDrawingPolicy()
         coordinator.reloadFromStore()
+    }
+
+    /// Re-reads the finger-painting preference so a Settings toggle applies to
+    /// the open canvas immediately instead of on next open.
+    @objc private func applyFingerDrawingPolicy() {
+        let settings = AppSettings.shared
+        canvas.drawingPolicy = CanvasInputPolicy.touchAllowedOnOpen(
+            allowFingerDrawing: settings.allowFingerDrawing,
+            touchLockedByPencil: settings.touchLockedByPencil
+        ) ? .anyInput : .pencilOnly
     }
 
     /// Capture coordinator: renders the FULL live drawing (including the
@@ -246,6 +308,8 @@ final class CanvasViewController: UIViewController {
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var onStateChange: ((Int, Int) -> Void)?
         var onStrokeCaptured: (() -> Void)?
+        /// Last rewrite token consumed (see PKCanvasContainer).
+        var lastRewriteToken = 0
 
         private var picker: PKToolPicker?
         private weak var canvas: PKCanvasView?
@@ -285,6 +349,25 @@ final class CanvasViewController: UIViewController {
                 inkStore?.load(strokes)
                 canvas.drawing = PKStrokeConverter.drawing(from: strokes)
             }
+            onStateChange?(canvas.drawing.strokes.count, persistedCount)
+        }
+
+        /// Unconditional rebuild of the live drawing and ink store from the
+        /// store's stroke blocks. Unlike `reloadFromStore` (which skips when
+        /// counts match), this runs after out-of-band payload edits such as a
+        /// letter-mode commit that rewrote points without changing the count.
+        func rewriteDrawingFromStore() {
+            guard let store, let recordID, let canvas else { return }
+            let strokeBlocks = (try? store.strokeBlocks(in: recordID)) ?? []
+            let strokes = strokeBlocks.compactMap { block -> StrokeData? in
+                guard case .stroke(let list, _, _) = block.payload, let first = list.first else { return nil }
+                return first
+            }
+            rendered = strokes
+            renderedCount = strokes.count
+            persistedCount = strokes.count
+            inkStore?.load(strokes)
+            canvas.drawing = PKStrokeConverter.drawing(from: strokes)
             onStateChange?(canvas.drawing.strokes.count, persistedCount)
         }
 

@@ -35,15 +35,22 @@ struct CoreGraphicsStrokeRenderer: StrokeRendering {
     }
 }
 
-/// Letter Mode renderer: older strokes fade from the user's ink color through
-/// mid-gray to light gray by age (newest = full color). Uses the shared
-/// per-stroke path drawing so correction still applies.
+/// Letter Mode renderer: the trailing ~3 letter clusters fade from the current
+/// ink color to grey (newest full color, two fading predecessors, older
+/// hidden). Uses the shared per-stroke path drawing so correction still
+/// applies. Stored hexes are used as-is — dynamic colors were resolved to
+/// concrete RGB at capture, so white stays white until it starts fading.
 struct LetterModeStrokeRenderer: StrokeRendering {
     func draw(_ strokes: [StrokeData], in context: CGContext) {
-        for (index, stroke) in strokes.enumerated() {
-            let age = LetterModeAging.ageFraction(strokeIndex: index, total: strokes.count)
-            let style = LetterModeAging.style(inkHex: stroke.colorHex, ageFraction: age)
-            CoreGraphicsStrokeRenderer().draw(stroke: stroke, colorHex: style.hex, alpha: style.alpha, in: context)
+        let clusters = LetterMode.letterClusters(strokes: strokes)
+        let renderer = CoreGraphicsStrokeRenderer()
+        for (ci, cluster) in clusters.enumerated() {
+            let alpha = LetterMode.clusterAlpha(positionsBackFromNewest: clusters.count - 1 - ci)
+            guard alpha > 0 else { continue }
+            for stroke in cluster {
+                let hex = LetterModeAging.fadedColor(inkHex: stroke.colorHex, ageFraction: 1 - alpha)
+                renderer.draw(stroke: stroke, colorHex: hex, alpha: alpha, in: context)
+            }
         }
     }
 }

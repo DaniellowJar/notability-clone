@@ -48,4 +48,13 @@ final class CanvasInputPolicyTests: XCTestCase {
         XCTAssertFalse(CanvasInputPolicy.touchAllowedOnOpen(allowFingerDrawing: second.allowFingerDrawing,
                                                            touchLockedByPencil: second.touchLockedByPencil))
     }
+
+    func testResetForTestingClearsBoth() {
+        let settings = makeSettings()
+        settings.allowFingerDrawing = true
+        settings.touchLockedByPencil = true
+        settings.resetForTesting()
+        XCTAssertFalse(settings.allowFingerDrawing)
+        XCTAssertFalse(settings.touchLockedByPencil)
+    }
 }

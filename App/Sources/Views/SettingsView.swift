@@ -1,3 +1,4 @@
+import NotabilityCore
 import SwiftUI
 
 /// Settings / onboarding (Phase 13): DeepInfra API key (BYOK) and OwnCloud
@@ -12,6 +13,10 @@ struct SettingsView: View {
     @State private var message: String?
     @State private var showKey = false
     @State private var syncing = false
+    @State private var allowFingerDrawing = false
+    @State private var headerAlignment = "center"
+    @State private var dateFormat = ""
+    @State private var timeFormat = ""
 
     var body: some View {
         NavigationStack {
@@ -54,6 +59,61 @@ struct SettingsView: View {
                         .accessibilityIdentifier("ownCloudUser")
                     SecureField("Password", text: $ownCloudPassword)
                         .accessibilityIdentifier("ownCloudPassword")
+                }
+
+                Section("Drawing") {
+                    Toggle("Draw with finger", isOn: $allowFingerDrawing)
+                        .accessibilityIdentifier("fingerPaintingToggle")
+                        .onChange(of: allowFingerDrawing) { _, new in
+                            AppSettings.shared.allowFingerDrawing = new
+                        }
+                    Text("First Pencil scribble turns finger painting off. Turning it back on here keeps it on.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Page") {
+                    Picker("Date alignment", selection: $headerAlignment) {
+                        Text("Left").tag("leading")
+                        Text("Center").tag("center")
+                        Text("Right").tag("trailing")
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("headerAlignment")
+                    .onChange(of: headerAlignment) { _, new in
+                        AppSettings.shared.pageHeaderAlignmentRaw = new
+                    }
+                    TextField("Date format (e.g. MMM d, yyyy)", text: $dateFormat)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("dateFormat")
+                        .onChange(of: dateFormat) { _, new in
+                            if new.isEmpty || PageHeaderFormat.isValidFormat(new) {
+                                AppSettings.shared.pageDateFormat = new
+                            }
+                        }
+                    TextField("Time format (e.g. h:mm a)", text: $timeFormat)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("timeFormat")
+                        .onChange(of: timeFormat) { _, new in
+                            if new.isEmpty || PageHeaderFormat.isValidFormat(new) {
+                                AppSettings.shared.pageTimeFormat = new
+                            }
+                        }
+                    if !dateFormat.isEmpty, !PageHeaderFormat.isValidFormat(dateFormat) {
+                        Text("Date format not recognized — keeping previous value.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !timeFormat.isEmpty, !PageHeaderFormat.isValidFormat(timeFormat) {
+                        Text("Time format not recognized — keeping previous value.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Blank formats fall back to the default. Applies when a page is opened.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -99,6 +159,10 @@ struct SettingsView: View {
         ownCloudURL = secrets.ownCloudURL ?? ""
         ownCloudUser = secrets.ownCloudUser ?? ""
         ownCloudPassword = secrets.ownCloudPassword ?? ""
+        allowFingerDrawing = AppSettings.shared.allowFingerDrawing
+        headerAlignment = AppSettings.shared.pageHeaderAlignmentRaw
+        dateFormat = AppSettings.shared.pageDateFormat
+        timeFormat = AppSettings.shared.pageTimeFormat
     }
 
     private func save() {

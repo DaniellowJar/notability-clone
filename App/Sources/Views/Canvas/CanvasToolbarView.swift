@@ -23,13 +23,17 @@ struct CanvasToolbarView: View {
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
-                switch session.mode {
-                case .draw:
-                    insertTools
-                case .editingBlock(let id):
-                    editingBar(blockID: id)
-                default:
-                    cancelBar
+                if session.letterArea != nil {
+                    letterBar
+                } else {
+                    switch session.mode {
+                    case .draw:
+                        insertTools
+                    case .editingBlock(let id):
+                        editingBar(blockID: id)
+                    default:
+                        cancelBar
+                    }
                 }
             }
             .padding(6)
@@ -63,7 +67,7 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "doc", id: "toolPDF") { showImporter = true }
             ToolButton(systemImage: "lasso", id: "toolSelect") { session.startSelectTool() }
             ToolButton(systemImage: "function", id: "toolCalc") { session.startPlaceCalc() }
-            ToolButton(systemImage: "textformat.size", id: "toolLetter") { session.toggleLetterMode() }
+            ToolButton(systemImage: "textformat.size", id: "toolLetter") { session.startLetterArea() }
             Divider().frame(height: 20)
             ToolButton(systemImage: isRecording ? "stop.circle.fill" : "mic", id: "toolRecord", tint: isRecording ? .red : .primary) { onToggleRecord() }
             ToolButton(systemImage: "waveform", id: "toolTranscript") { onShowTranscript() }
@@ -137,11 +141,19 @@ struct CanvasToolbarView: View {
         }
     }
 
+    private var letterBar: some View {
+        HStack(spacing: 2) {
+            ToolButton(title: "Done", id: "toolDone") { session.exitLetterMode() }
+        }
+    }
+
     private var modeHint: String? {
+        if session.letterArea != nil { return "Write big — the camera follows · Done to finish" }
         switch session.mode {
         case .draw: nil
         case .areaSelect(.newTextBlock): "Drag to create a text block"
         case .areaSelect(.selectBlocks): "Drag or tap to select a block"
+        case .areaSelect(.letterArea): "Drag to select the letter area"
         case .tapToPlace(.image): "Tap the canvas to place the image"
         case .tapToPlace(.pdf): "Tap the canvas to place the PDF"
         case .tapToPlace(.calc): "Tap the canvas to place the calculator"

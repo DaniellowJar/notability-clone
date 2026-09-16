@@ -11,6 +11,9 @@ final class AppSettings {
 
     private static let allowFingerDrawingKey = "allowFingerDrawing"
     private static let touchLockedByPencilKey = "touchLockedByPencil"
+    private static let pageHeaderAlignmentKey = "pageHeaderAlignment"
+    private static let pageDateFormatKey = "pageDateFormat"
+    private static let pageTimeFormatKey = "pageTimeFormat"
 
     private let defaults: UserDefaults
 
@@ -21,7 +24,10 @@ final class AppSettings {
     /// User explicitly enabled finger painting. Defaults to off.
     var allowFingerDrawing: Bool {
         get { defaults.bool(forKey: Self.allowFingerDrawingKey) }
-        set { defaults.set(newValue, forKey: Self.allowFingerDrawingKey) }
+        set {
+            defaults.set(newValue, forKey: Self.allowFingerDrawingKey)
+            NotificationCenter.default.post(name: .fingerDrawingChanged, object: nil)
+        }
     }
 
     /// Set automatically the first time a Pencil scribbles while finger
@@ -29,7 +35,10 @@ final class AppSettings {
     /// stays off for pencil users instead of silently re-enabling.
     var touchLockedByPencil: Bool {
         get { defaults.bool(forKey: Self.touchLockedByPencilKey) }
-        set { defaults.set(newValue, forKey: Self.touchLockedByPencilKey) }
+        set {
+            defaults.set(newValue, forKey: Self.touchLockedByPencilKey)
+            NotificationCenter.default.post(name: .fingerDrawingChanged, object: nil)
+        }
     }
 
     /// Clears both preferences — used by UI tests (isolated, -inMemoryStore runs)
@@ -37,6 +46,25 @@ final class AppSettings {
     func resetForTesting() {
         defaults.removeObject(forKey: Self.allowFingerDrawingKey)
         defaults.removeObject(forKey: Self.touchLockedByPencilKey)
+    }
+
+    /// Raw page-header alignment (`PageHeaderAlignment.rawValue`, default
+    /// "center"). Kept as a string so AppSettings stays Foundation-only.
+    var pageHeaderAlignmentRaw: String {
+        get { defaults.string(forKey: Self.pageHeaderAlignmentKey) ?? "center" }
+        set { defaults.set(newValue, forKey: Self.pageHeaderAlignmentKey) }
+    }
+
+    /// Custom date/time format strings (DateFormatter patterns). Empty means
+    /// the built-in default; Settings validates before saving.
+    var pageDateFormat: String {
+        get { defaults.string(forKey: Self.pageDateFormatKey) ?? "" }
+        set { defaults.set(newValue, forKey: Self.pageDateFormatKey) }
+    }
+
+    var pageTimeFormat: String {
+        get { defaults.string(forKey: Self.pageTimeFormatKey) ?? "" }
+        set { defaults.set(newValue, forKey: Self.pageTimeFormatKey) }
     }
 }
 
@@ -55,4 +83,10 @@ enum CanvasInputPolicy {
     static func shouldLockTouch(afterPencilUse allowFingerDrawing: Bool) -> Bool {
         !allowFingerDrawing
     }
+}
+
+extension Notification.Name {
+    /// Posted whenever `allowFingerDrawing` or `touchLockedByPencil` changes so
+    /// an open canvas can apply the new drawing policy live.
+    static let fingerDrawingChanged = Notification.Name("fingerDrawingChanged")
 }

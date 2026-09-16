@@ -15,6 +15,8 @@ public enum SelectionIntent: Equatable, Sendable {
     case newTextBlock
     /// Marquee/tap selects existing block(s) by z-order.
     case selectBlocks
+    /// Marquee selects the Letter Mode writing area (Step 5: zoom-to-fit).
+    case letterArea
 }
 
 public enum PlacementIntent: Equatable, Sendable {
