@@ -34,8 +34,9 @@ struct RecordCanvasView: View {
                     }
                 )
                 .allowsHitTesting(session.mode.allowsInkHitTesting)
-                InkRenderView(strokes: inkStore.strokes, style: session.letterMode ? .letterMode : .normal)
+                InkRenderView(strokes: inkStore.strokes, style: .letterMode)
                     .allowsHitTesting(false)
+                    .opacity(session.letterMode ? 1 : 0)
 
                 captureOverlay
 
@@ -298,21 +299,26 @@ final class CanvasViewController: UIViewController {
             }
         }
 
-        /// Fires continuously while drawing: keep the rendered set in sync with
-        /// the live drawing (the in-progress stroke included) so the user sees
-        /// ink while they paint. Persistence happens on stroke completion.
+        /// Fires when the drawing changes (a stroke is added on completion).
+        /// Persist any newly-completed strokes as `.stroke` blocks; native
+        /// PKCanvasView rendering provides the live ink the user sees.
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             let all = canvasView.drawing.strokes
             updateRendered(from: all)
-            if all.count < persistedCount {
+            if all.count > persistedCount {
+                let newStrokes = all[persistedCount...].map(PKStrokeConverter.strokeData)
+                persist(added: newStrokes)
+                persistedCount = all.count
+                onStrokeCaptured?()
+            } else if all.count < persistedCount {
                 removeLastStrokeBlocks(persistedCount - all.count)
                 persistedCount = all.count
             }
             onStateChange?(all.count, persistedCount)
         }
 
-        /// The user lifted the tool: the in-progress stroke is now final —
-        /// persist any strokes beyond what we've already stored.
+        /// Safety flush in case a stroke completes without a drawing-did-change
+        /// (no-op when `persistedCount` is already current).
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             persistCompleted(from: canvasView.drawing.strokes)
         }
