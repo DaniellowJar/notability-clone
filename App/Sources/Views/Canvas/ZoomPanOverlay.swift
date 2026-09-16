@@ -34,7 +34,8 @@ struct ZoomPanOverlay: UIViewRepresentable {
 /// Tracks exactly two touches, reporting incremental span ratio, midpoint
 /// translation, and midpoint anchor on every move. Fails cleanly otherwise.
 final class PinchPanGestureRecognizer: UIGestureRecognizer {
-    var onChange: ((scaleRatio: Double, translation: CGPoint, anchor: CGPoint) -> Void)?
+    /// (scaleRatio, translation, anchor) — all in host-viewport coordinates.
+    var onChange: ((Double, CGPoint, CGPoint) -> Void)?
 
     private weak var host: UIView?
     private var tracked: [UITouch] = []
