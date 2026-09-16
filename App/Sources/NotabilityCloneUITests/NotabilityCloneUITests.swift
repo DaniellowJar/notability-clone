@@ -178,7 +178,20 @@ final class NotabilityCloneUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertEqual(toggle.value as? String, "1", "toggle must switch on")
-        app.navigationBars.firstMatch.buttons["Done"].tap()
+
+        // Dismiss Settings: tap Done (global lookup — firstMatch nav bar can be
+        // the root's), falling back to swipe-down, then wait until it's gone.
+        let done = app.buttons["Done"].firstMatch
+        if done.waitForExistence(timeout: 5) {
+            done.tap()
+        } else {
+            app.sheets.firstMatch.swipeDown()
+        }
+        let goneBy = Date().addingTimeInterval(5)
+        while toggle.exists, Date() < goneBy {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertFalse(toggle.exists, "Settings sheet should dismiss")
 
         // 2. Notebook → New Page → canvas.
         XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
