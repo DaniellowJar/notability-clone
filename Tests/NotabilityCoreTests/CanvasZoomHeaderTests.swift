@@ -47,6 +47,17 @@ final class CanvasTransformTests: XCTestCase {
         XCTAssertEqual(t.offsetY, -1, accuracy: 1e-9)
     }
 
+    func testZoomPanStepKeepsAnchorThenPans() {
+        // Scale 1→2 about (100,100), then shift (10,0): the canvas point under
+        // the anchor ends at anchor + pan.
+        let t = CanvasTransform.identity.zoomPanStep(
+            scaleRatio: 2, anchorScreen: Point(x: 100, y: 100), pan: Point(x: 10, y: 0))
+        XCTAssertEqual(t.scale, 2, accuracy: 1e-9)
+        let held = t.toScreen(Point(x: 100, y: 100))
+        XCTAssertEqual(held.x, 110, accuracy: 1e-9)
+        XCTAssertEqual(held.y, 100, accuracy: 1e-9)
+    }
+
     func testGrownHeight() {
         // Never shrinks.
         XCTAssertEqual(CanvasTransform.grownHeight(current: 2000, contentBottom: 100, viewportHeight: 800, padding: 200), 2000)
@@ -54,6 +65,20 @@ final class CanvasTransformTests: XCTestCase {
         XCTAssertEqual(CanvasTransform.grownHeight(current: 500, contentBottom: 900, viewportHeight: 800, padding: 200), 1100)
         // Always covers the viewport.
         XCTAssertEqual(CanvasTransform.grownHeight(current: 100, contentBottom: 50, viewportHeight: 800, padding: 200), 800)
+    }
+
+    func testVisibleBottomFollowsPanAndZoom() {
+        XCTAssertEqual(CanvasTransform.visibleBottom(viewportHeight: 800, offsetY: 0, scale: 1), 800, accuracy: 1e-9)
+        // Panned down 400pt: sees 400pt further.
+        XCTAssertEqual(CanvasTransform.visibleBottom(viewportHeight: 800, offsetY: -400, scale: 1), 1200, accuracy: 1e-9)
+        // Zoomed 2x at origin: sees half the height in canvas points.
+        XCTAssertEqual(CanvasTransform.visibleBottom(viewportHeight: 800, offsetY: 0, scale: 2), 400, accuracy: 1e-9)
+    }
+
+    func testRasterScaleTracksZoom() {
+        XCTAssertEqual(CanvasTransform.rasterScale(screenScale: 3, zoom: 1), 3, accuracy: 1e-9)
+        XCTAssertEqual(CanvasTransform.rasterScale(screenScale: 3, zoom: 2), 6, accuracy: 1e-9)
+        XCTAssertEqual(CanvasTransform.rasterScale(screenScale: 2, zoom: 0.5), 2, accuracy: 1e-9)
     }
 }
 
@@ -142,5 +167,62 @@ final class LetterModeMathTests: XCTestCase {
         XCTAssertEqual(LetterMode.clusterAlpha(positionsBackFromNewest: 2), 0.25, accuracy: 1e-9)
         XCTAssertEqual(LetterMode.clusterAlpha(positionsBackFromNewest: 3), 0, accuracy: 1e-9)
         XCTAssertEqual(LetterMode.clusterAlpha(positionsBackFromNewest: 10), 0, accuracy: 1e-9)
+    }
+}
+
+final class PDFTileTests: XCTestCase {
+    func testZoomBucketSteps() {
+        XCTAssertEqual(PDFTile.zoomBucket(1), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(PDFTile.zoomBucket(1.3), 1.5, accuracy: 1e-9)
+        XCTAssertEqual(PDFTile.zoomBucket(2.3), 2.5, accuracy: 1e-9)
+        XCTAssertEqual(PDFTile.zoomBucket(4), 4.0, accuracy: 1e-9)
+        XCTAssertEqual(PDFTile.zoomBucket(0), 1.0, accuracy: 1e-9)
+    }
+
+    func testPixelSizeScalesWithZoom() {
+        let frame = Size(width: 200, height: 100)
+        let lo = PDFTile.pixelSize(frame: frame, zoomScale: 1, displayScale: 3)
+        XCTAssertEqual(lo.width, 600, accuracy: 1e-9)
+        XCTAssertEqual(lo.height, 300, accuracy: 1e-9)
+        let hi = PDFTile.pixelSize(frame: frame, zoomScale: 2.3, displayScale: 3)
+        XCTAssertEqual(hi.width, 1500, accuracy: 1e-9)
+        XCTAssertEqual(hi.height, 750, accuracy: 1e-9)
+    }
+
+    func testPixelSizeCapsMemory() {
+        let big = PDFTile.pixelSize(frame: Size(width: 2000, height: 100), zoomScale: 4, displayScale: 3)
+        XCTAssertEqual(max(big.width, big.height), 4096, accuracy: 1e-9)
+        XCTAssertEqual(big.width / big.height, 20, accuracy: 0.01, "aspect preserved")
+    }
+
+    func testPixelSizeRejectsGarbage() {
+        XCTAssertEqual(PDFTile.pixelSize(frame: .zero, zoomScale: 2, displayScale: 3), .zero)
+        XCTAssertEqual(PDFTile.pixelSize(frame: Size(width: 10, height: 10), zoomScale: 2, displayScale: 0), .zero)
+    }
+}
+
+final class PageTextureTests: XCTestCase {
+    func testTilesArePositiveExceptPlain() {
+        for texture in PageTexture.allCases {
+            if texture == .plain {
+                XCTAssertEqual(texture.tile, 0)
+            } else {
+                XCTAssertGreaterThan(texture.tile, 0)
+            }
+        }
+    }
+
+    func testColumnsAndRows() {
+        XCTAssertEqual(PageTexture.dots.columnsAndRows(for: Size(width: 100, height: 50)).columns, 4)
+        XCTAssertEqual(PageTexture.dots.columnsAndRows(for: Size(width: 100, height: 50)).rows, 2)
+        XCTAssertEqual(PageTexture.plain.columnsAndRows(for: Size(width: 100, height: 50)).columns, 0)
+        let empty = PageTexture.squares.columnsAndRows(for: Size.zero)
+        XCTAssertEqual(empty.columns, 0)
+        XCTAssertEqual(empty.rows, 0)
+    }
+
+    func testRawValueRoundTrip() throws {
+        let data = try JSONEncoder().encode(PageTexture.hexagons)
+        XCTAssertEqual(try JSONDecoder().decode(PageTexture.self, from: data), .hexagons)
     }
 }

@@ -65,6 +65,25 @@ final class RecordCRUDTests: XCTestCase {
         try store.deleteRecord(rec.id)
         XCTAssertTrue(try store.records(in: nb.id).isEmpty)
     }
+
+    func testRecordTextureDefaultsPlainAndPersists() throws {
+        let store = try NotabilityStore()
+        let nb = try store.createNotebook(title: "NB", coverColorHex: "#000")
+        let rec = try store.createRecord(in: nb.id, title: "r")
+        XCTAssertEqual(rec.texture, .plain)
+        XCTAssertEqual(try store.texture(for: rec.id), .plain)
+        try store.setRecordTexture(.dots, for: rec.id)
+        XCTAssertEqual(try store.texture(for: rec.id), .dots)
+        XCTAssertEqual(try store.records(in: nb.id).first?.texture, .dots)
+    }
+
+    func testRecordWithoutTextureKeyDecodesAsPlain() throws {
+        // Pre-texture backups lack the key; they must still import.
+        let json = """
+        {"id":"\(UUID().uuidString)","notebookId":"\(UUID().uuidString)","title":"old","createdAt":0,"modifiedAt":0}
+        """.data(using: .utf8)!
+        XCTAssertEqual(try JSONDecoder().decode(Record.self, from: json).texture, .plain)
+    }
 }
 
 final class BlockCRUDTests: XCTestCase {

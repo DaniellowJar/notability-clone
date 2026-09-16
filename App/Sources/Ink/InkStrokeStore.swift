@@ -21,4 +21,16 @@ final class InkStrokeStore {
             strokes = Array(strokes.prefix(count))
         }
     }
+
+    /// Ephemeral in-progress stroke (touch-tracked preview). Rendered on top
+    /// at full color; never persisted — the completed stroke replaces it.
+    var liveStroke: StrokeData?
+
+    func setLiveStroke(_ stroke: StrokeData) {
+        liveStroke = stroke
+    }
+
+    func clearLiveStroke() {
+        liveStroke = nil
+    }
 }

@@ -57,4 +57,24 @@ final class Phase8_13Tests: XCTestCase {
             "Hello PDF".draw(at: CGPoint(x: 20, y: 20), withAttributes: [.font: UIFont.systemFont(ofSize: 20)])
         }
     }
+
+    func testVectorRenderScalesWithZoom() throws {
+        // Vector blocks render at exactly the pixels the zoom needs —
+        // different zooms must produce different-sized rasters.
+        let tmp = tempDir()
+        let url = tmp.appendingPathComponent("doc.pdf")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try makeTinyPDF().write(to: url)
+
+        let ref = "Media/PDF/vec-test.pdf"
+        try BlobStore.shared.save(makeTinyPDF(), as: ref)
+        PDFVectorRenderer.clearCache()
+        let lo = PDFVectorRenderer.render(ref: ref, pageIndex: 0, pixels: CGSize(width: 600, height: 600))
+        let hi = PDFVectorRenderer.render(ref: ref, pageIndex: 0, pixels: CGSize(width: 1200, height: 1200))
+        XCTAssertNotNil(lo)
+        XCTAssertNotNil(hi)
+        XCTAssertEqual(lo?.size.width ?? 0, 600, accuracy: 0.5)
+        XCTAssertEqual(hi?.size.width ?? 0, 1200, accuracy: 0.5)
+        try? FileManager.default.removeItem(at: tmp)
+    }
 }

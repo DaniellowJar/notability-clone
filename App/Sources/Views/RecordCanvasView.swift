@@ -28,9 +28,11 @@ struct RecordCanvasView: View {
                 // and panned by the session transform. Everything inside uses
                 // canvas coordinates; gestures inverse-map through it.
                 ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemBackground))
+                    PageTextureView(texture: session.pageTexture,
+                                    contentWidth: session.contentWidth,
+                                    contentHeight: session.contentHeight)
                         .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color(.separator), lineWidth: 1 / CGFloat(max(session.transform.scale, 0.01)))
                         .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
@@ -54,7 +56,7 @@ struct RecordCanvasView: View {
                     )
                     .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                     .allowsHitTesting(session.mode.allowsInkHitTesting)
-                    InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal)
+                    InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal, liveStroke: inkStore.liveStroke, zoomScale: session.transform.scale)
                         .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                         .allowsHitTesting(false)
                         .opacity(session.letterArea != nil ? 1 : 0)
@@ -92,7 +94,7 @@ struct RecordCanvasView: View {
         }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count) zoom=\(String(format: "%.2f", session.transform.scale))")
+            Text("strokes=\(visibleStrokes) saved=\(savedStrokes) blocks=\(session.blocks.count) zoom=\(String(format: "%.2f", session.transform.scale)) texture=\(session.pageTexture.rawValue)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .allowsHitTesting(false)
@@ -151,12 +153,13 @@ struct RecordCanvasView: View {
         growContent()
     }
 
-    /// Grow the page below the lowest block or stroke so writing never runs
-    /// off the bottom. Idempotent; safe to call on every content change.
+    /// Grow the page below the lowest block, stroke, or visible viewport edge
+    /// so writing — and scrolling into empty space — never runs off the bottom.
+    /// Idempotent; safe to call on every content change.
     private func growContent() {
         let blocksBottom = session.blocks.map(\.frame.maxY).max() ?? 0
         let strokesBottom = inkStore.strokes.map(\.bounds.maxY).max() ?? 0
-        session.ensureContentHeight(bottom: max(blocksBottom, strokesBottom))
+        session.ensureContentHeight(bottom: max(blocksBottom, strokesBottom, session.visibleBottom))
     }
 
     // MARK: - Audio / transcript / PDF / quiz actions
@@ -321,6 +324,14 @@ final class CanvasViewController: UIViewController {
         /// Strokes currently rendered (mirrors the live PKCanvasView drawing).
         private var rendered: [StrokeData] = []
         private var renderedCount = 0
+        /// Live touch path for the in-progress stroke preview. Not tracked per
+        /// touch: simultaneous multi-touch drawing is rare and a one-frame
+        /// polyline jump self-corrects on the next event.
+        private var livePoints: [CGPoint] = []
+        private var liveTracking = false
+        private var liveColorHex = "#000000"
+        private var liveWidth = 3.0
+        private var lastLivePush: TimeInterval = 0
 
         func loadDrawing(into canvas: PKCanvasView, store: NotabilityStore, recordID: UUID, inkStore: InkStrokeStore) {
             self.canvas = canvas
@@ -376,10 +387,52 @@ final class CanvasViewController: UIViewController {
             picker.addObserver(canvas)
             picker.setVisible(true, forFirstResponder: canvas)
             self.picker = picker
+            if let capture = canvas as? CaptureCanvasView {
+                capture.onLiveTouch = { [weak self] point, type, ended in
+                    self?.handleLiveTouch(point: point, type: type, ended: ended)
+                }
+            }
             DispatchQueue.main.async {
                 canvas.becomeFirstResponder()
                 picker.setVisible(true, forFirstResponder: canvas)
             }
+        }
+
+        /// Live touch path for the in-progress stroke preview, so ink appears
+        /// while painting even under the opaque letter layer. Pencil always
+        /// draws; finger only when the policy allows touch.
+        private func handleLiveTouch(point: CGPoint, type: UITouch.TouchType, ended: Bool) {
+            guard let canvas else {
+                livePoints = []
+                liveTracking = false
+                inkStore?.clearLiveStroke()
+                return
+            }
+            let drawable = type == .pencil || canvas.drawingPolicy == .anyInput
+            guard drawable else { return }
+            if ended {
+                livePoints = []
+                liveTracking = false
+                inkStore?.clearLiveStroke()
+                return
+            }
+            if !liveTracking {
+                liveTracking = true
+                livePoints = []
+                if let ink = canvas.tool as? PKInkingTool {
+                    liveColorHex = ink.color.hexString
+                    liveWidth = Double(ink.width)
+                }
+            }
+            livePoints.append(point)
+            // Touch streams can exceed display refresh; throttle preview pushes.
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - lastLivePush >= 1 / 60 else { return }
+            lastLivePush = now
+            let pts = livePoints.map {
+                StrokePoint(location: Point(x: $0.x, y: $0.y), timestampOffset: 0, width: liveWidth, force: 0.5, azimuth: 0, altitude: 0)
+            }
+            inkStore?.setLiveStroke(StrokeData(points: pts, colorHex: liveColorHex, baseWidth: liveWidth))
         }
 
         /// Fires when the drawing changes (a stroke is added on completion).
@@ -462,12 +515,43 @@ final class CanvasViewController: UIViewController {
 /// Phase 3 uses it as the capture-only canvas.
 private final class CaptureCanvasView: PKCanvasView {
     var onPencilFirstUse: (() -> Void)?
+    /// Live touch path in canvas-view points (== canvas points: the view is
+    /// laid out at content size, so local coords need no unscaling).
+    /// Parameters: location, touch type, ended/cancelled.
+    var onLiveTouch: ((CGPoint, UITouch.TouchType, Bool) -> Void)?
     private var pencilSeen = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
-        guard !pencilSeen, touches.contains(where: { $0.type == .pencil }) else { return }
-        pencilSeen = true
-        onPencilFirstUse?()
+        if !pencilSeen, touches.contains(where: { $0.type == .pencil }) {
+            pencilSeen = true
+            onPencilFirstUse?()
+        }
+        for touch in touches {
+            onLiveTouch?(touch.location(in: self), touch.type, false)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        for touch in touches {
+            onLiveTouch?(touch.location(in: self), touch.type, false)
+        }
+    }
+
+    private func endLiveTouches(_ touches: Set<UITouch>) {
+        for touch in touches {
+            onLiveTouch?(touch.location(in: self), touch.type, true)
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        endLiveTouches(touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        endLiveTouches(touches)
     }
 }

@@ -65,7 +65,9 @@ final class LetterModeV2Tests: XCTestCase {
         }
         XCTAssertEqual(bHeight ?? -1, 10.5, accuracy: 0.001, "35px stroke scaled by 12/40")
         XCTAssertEqual(session.drawingRewriteToken, 1, "canvas must rebuild from the store")
-        XCTAssertEqual(session.letterCursorY, 90 + 12 + 8, accuracy: 1e-9)
+        // 45px-wide union scaled by 12/40 advances x by 13.5 + 8 gap; no wrap.
+        XCTAssertEqual(session.letterCursor.x, 21.5, accuracy: 1e-9)
+        XCTAssertEqual(session.letterCursor.y, 90, accuracy: 1e-9)
         XCTAssertEqual(session.letterLineStartCount, 2)
     }
 
@@ -79,7 +81,7 @@ final class LetterModeV2Tests: XCTestCase {
                                          frame: Rect(x: 500, y: 500, width: 20, height: 40))
 
         session.letterArea = Rect(x: 0, y: 90, width: 200, height: 100)
-        session.letterCursorY = 90
+        session.letterCursor = Point(x: 0, y: 90)
         session.letterLineStartCount = 0
         session.commitLetterLine()
 
@@ -93,6 +95,22 @@ final class LetterModeV2Tests: XCTestCase {
         XCTAssertEqual(inside.id, strokes.first { $0.id == inside.id }?.id)
     }
 
+    func testCommitWrapsAtAreaEdge() throws {
+        let session = CanvasSessionState()
+        session.load(recordID: recordID, store: store)
+
+        _ = try addStrokeBlock(stroke(x0: 10, x1: 30, y0: 100, y1: 140),
+                               frame: Rect(x: 10, y: 100, width: 20, height: 40))
+        session.letterArea = Rect(x: 0, y: 90, width: 200, height: 100)
+        session.letterCursor = Point(x: 190, y: 90)
+        session.letterLineStartCount = 0
+        session.commitLetterLine()
+
+        // 190 + 20*0.3 + 8 = 204 >= 200 - 8 → wrap to the next line.
+        XCTAssertEqual(session.letterCursor.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(session.letterCursor.y, 90 + 12 + 8, accuracy: 1e-9)
+    }
+
     func testTrackLetterWritingFollowsCamera() {
         let session = CanvasSessionState()
         session.load(recordID: recordID, store: store)
@@ -104,5 +122,32 @@ final class LetterModeV2Tests: XCTestCase {
 
         session.trackLetterWriting(x: 700, y: 100)
         XCTAssertEqual(session.transform.offsetX, -140, accuracy: 1e-9, "writing parks at 70% width")
+    }
+}
+
+final class LiveStrokeTests: XCTestCase {
+    func testLiveStrokeSetAndClear() {
+        let store = InkStrokeStore()
+        XCTAssertNil(store.liveStroke)
+        let preview = StrokeData(
+            points: [StrokePoint(location: Point(x: 1, y: 2), timestampOffset: 0, width: 2, force: 0.5, azimuth: 0, altitude: 0)],
+            colorHex: "#FF0000",
+            baseWidth: 2
+        )
+        store.setLiveStroke(preview)
+        XCTAssertEqual(store.liveStroke, preview)
+        store.clearLiveStroke()
+        XCTAssertNil(store.liveStroke)
+    }
+
+    func testLiveStrokeReplacesPreviousPreview() {
+        let store = InkStrokeStore()
+        let first = StrokeData(points: [], colorHex: "#000000", baseWidth: 2)
+        let second = StrokeData(points: [], colorHex: "#FFFFFF", baseWidth: 3)
+        store.setLiveStroke(first)
+        store.setLiveStroke(second)
+        XCTAssertEqual(store.liveStroke, second)
+        // Completed strokes are untouched by the ephemeral preview.
+        XCTAssertTrue(store.strokes.isEmpty)
     }
 }

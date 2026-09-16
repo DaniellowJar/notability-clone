@@ -31,13 +31,16 @@ final class CanvasSessionState {
     static let letterCommittedHeight = 12.0
     /// Gap below a committed line before the next one starts.
     static let letterLineGap = 8.0
+    /// Horizontal gap after a committed segment before the next one starts.
+    static let letterWordGap = 8.0
     /// Screen offset of the letter area's top edge when zoomed to fit.
     static let letterTopInset = 140.0
 
     /// Active writing area in canvas points; nil when letter mode is off.
     var letterArea: Rect?
-    /// Y (canvas points) where the next committed line starts.
-    var letterCursorY: Double = 0
+    /// Next write position in canvas points. Advances right along the line
+    /// and wraps down at the area's right edge (never blindly per pause).
+    var letterCursor = Point(x: 0, y: 0)
     /// Store stroke-block count where the current line started.
     var letterLineStartCount = 0
     /// Bumped whenever the canvas drawing must be rebuilt from the store.
@@ -50,20 +53,31 @@ final class CanvasSessionState {
         self.recordID = recordID
         self.store = store
         loadHeaderFormat()
+        pageTexture = (try? store.texture(for: recordID)) ?? .plain
         reload()
     }
 
     func loadHeaderFormat() {
         let settings = AppSettings.shared
         let dateFormat = settings.pageDateFormat.isEmpty
-            ? PageHeaderFormat.default.dateFormat : settings.pageDateFormat
+            ? PageHeaderFormat.defaultDateFormat : settings.pageDateFormat
         let timeFormat = settings.pageTimeFormat.isEmpty
-            ? PageHeaderFormat.default.timeFormat : settings.pageTimeFormat
+            ? PageHeaderFormat.defaultTimeFormat : settings.pageTimeFormat
         headerFormat = PageHeaderFormat(
             alignment: PageHeaderAlignment(rawValue: settings.pageHeaderAlignmentRaw) ?? .center,
             dateFormat: dateFormat,
             timeFormat: timeFormat
         )
+    }
+
+    func setPageTexture(_ texture: PageTexture) {
+        guard let recordID, let store else { return }
+        do {
+            try store.setRecordTexture(texture, for: recordID)
+            pageTexture = texture
+        } catch {
+            errorMessage = "Could not change page texture: \(error.localizedDescription)"
+        }
     }
 
     func reload() {
@@ -102,6 +116,8 @@ final class CanvasSessionState {
     var contentHeight: Double = 0
     var viewport = Size.zero
     var headerFormat = PageHeaderFormat.default
+    /// This page's background pattern (per-page setting, persisted).
+    var pageTexture = PageTexture.plain
 
     func configureViewport(_ size: Size) {
         viewport = size
@@ -120,24 +136,29 @@ final class CanvasSessionState {
         )
     }
 
-    // MARK: - Pinch zoom & pan (driven by the zoom overlay, screen points)
-
-    private var pinchBase = CanvasTransform.identity
-
-    func pinchBegan() {
-        pinchBase = transform
+    /// Canvas-space Y of the viewport's bottom edge at the current transform.
+    var visibleBottom: Double {
+        CanvasTransform.visibleBottom(
+            viewportHeight: viewport.height,
+            offsetY: transform.offsetY,
+            scale: transform.scale
+        )
     }
 
-    func pinchChanged(relativeScale: Double, anchorScreen: Point) {
-        transform = pinchBase.zoomed(to: pinchBase.scale * relativeScale, anchorScreen: anchorScreen)
+    /// Grow for scrolling: keep room below what the user can currently see,
+    /// so panning into empty space extends the page ahead of them.
+    func growForViewport() {
+        ensureContentHeight(bottom: visibleBottom)
     }
 
-    func pinchEnded() {
-        pinchBase = transform
-    }
+    // MARK: - Pinch zoom & pan (one unified two-finger gesture, screen points)
 
-    func panBy(_ delta: Point) {
-        transform = transform.panned(by: delta)
+    /// Apply one incremental Maps-style frame: zoom about the moving anchor,
+    /// then translate. Called on every gesture event from the current
+    /// transform — never recomputed from a gesture-start base.
+    func applyZoomPan(scaleRatio: Double, anchorScreen: Point, pan: Point) {
+        transform = transform.zoomPanStep(scaleRatio: scaleRatio, anchorScreen: anchorScreen, pan: pan)
+        growForViewport()
     }
 
     // MARK: - Tools
@@ -189,7 +210,7 @@ final class CanvasSessionState {
             offsetY: Self.letterTopInset - rect.minY * scale
         )
         letterArea = rect
-        letterCursorY = rect.minY
+        letterCursor = Point(x: rect.minX, y: rect.minY)
         letterLineStartCount = (try? store.strokeBlocks(in: recordID).count) ?? 0
         mode = .draw
     }
@@ -258,7 +279,7 @@ final class CanvasSessionState {
         var box = inArea[0].frame
         for b in inArea.dropFirst() { box = Rect.union(box, b.frame) }
         let scale = LetterMode.normalizeScale(lineHeight: box.size.height, targetHeight: Self.letterCommittedHeight)
-        let anchor = Point(x: area.minX, y: letterCursorY)
+        let anchor = letterCursor
         do {
             for block in inArea {
                 guard case .stroke(let strokes, let text, let corrected) = block.payload else { continue }
@@ -279,7 +300,11 @@ final class CanvasSessionState {
                 }
                 try store.updateBlockPayload(block.id, payload: .stroke(mapped, recognizedText: text, corrected: corrected))
             }
-            letterCursorY += Self.letterCommittedHeight + Self.letterLineGap
+            // Advance along the line; wrap down only at the area's right edge.
+            letterCursor.x += box.size.width * scale + Self.letterWordGap
+            if letterCursor.x >= area.maxX - Self.letterWordGap {
+                letterCursor = Point(x: area.minX, y: letterCursor.y + Self.letterCommittedHeight + Self.letterLineGap)
+            }
             letterLineStartCount = (try? store.strokeBlocks(in: recordID).count) ?? 0
             drawingRewriteToken += 1
         } catch {

@@ -2,17 +2,26 @@ import NotabilityCore
 import PDFKit
 import SwiftUI
 
-/// A PDF attachment block: a page-0 thumbnail card that opens the read-only
-/// PDFKit viewer when tapped.
+/// A PDF attachment block: the vector page rendered live at the current zoom,
+/// opening the read-only PDFKit viewer when tapped.
 struct PDFBlockView: View {
     let block: CanvasBlock
+    let zoomScale: Double
 
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: UIImage?
     @State private var thumb: UIImage?
+    @State private var renderEpoch = 0
+    @State private var renderWork: DispatchWorkItem?
     @State private var showReader = false
 
     var body: some View {
         Group {
-            if let thumb {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if let thumb {
                 Image(uiImage: thumb)
                     .resizable()
                     .scaledToFit()
@@ -32,7 +41,11 @@ struct PDFBlockView: View {
         .frame(width: block.frame.size.width, height: block.frame.size.height)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(RoundedRectangle(cornerRadius: 6))
-        .onAppear(perform: load)
+        .onAppear {
+            loadThumb()
+            scheduleRender()
+        }
+        .onChange(of: zoomScale) { scheduleRender() }
         .onTapGesture { showReader = true }
         .sheet(isPresented: $showReader) {
             if let url = pdfURL {
@@ -45,9 +58,39 @@ struct PDFBlockView: View {
         block.pdfSourceRef.map { BlobStore.shared.url(for: $0) }
     }
 
-    private func load() {
+    private func loadThumb() {
         guard thumb == nil, let thumbRef = block.pdfThumbRef else { return }
         thumb = BlobStore.shared.data(for: thumbRef).flatMap(UIImage.init(data:))
+    }
+
+    /// Re-render at the settled zoom (debounced so a continuous pinch doesn't
+    /// rasterize every frame). Stale renders never apply thanks to the epoch.
+    private func scheduleRender() {
+        renderWork?.cancel()
+        renderEpoch += 1
+        let epoch = renderEpoch
+        let scale = zoomScale
+        let frameSize = block.frame.size
+        guard case .pdfPage(let payload) = block.payload,
+              let sourceRef = block.pdfSourceRef else { return }
+        let pageIndex = payload.pageIndex
+        let work = DispatchWorkItem {
+            let pixels = PDFTile.pixelSize(
+                frame: Size(width: frameSize.width, height: frameSize.height),
+                zoomScale: scale,
+                displayScale: Double(displayScale)
+            )
+            guard pixels != .zero,
+                  let rendered = PDFVectorRenderer.render(
+                      ref: sourceRef, pageIndex: pageIndex,
+                      pixels: CGSize(width: pixels.width, height: pixels.height)
+                  ) else { return }
+            if epoch == renderEpoch {
+                image = rendered
+            }
+        }
+        renderWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 }
 

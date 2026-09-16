@@ -65,4 +65,15 @@ final class Phase3RenderingTests: XCTestCase {
         XCTAssertEqual(session.blocks.count, 1, "ink strokes render via the ink layer, not the block overlay")
         XCTAssertEqual(session.blocks[0].kind, .text)
     }
+
+    func testInkBackingScaleTracksZoom() {
+        // The raster backing must match display × zoom so zoomed ink
+        // re-rasterizes from vectors instead of magnifying a 1x bitmap.
+        let view = InkCanvasView()
+        let screen = Double(UIScreen.main.scale)
+        view.zoomScale = 1
+        XCTAssertEqual(Double(view.contentScaleFactor), screen * 1, accuracy: 0.001)
+        view.zoomScale = 2
+        XCTAssertEqual(Double(view.contentScaleFactor), screen * 2, accuracy: 0.001)
+    }
 }

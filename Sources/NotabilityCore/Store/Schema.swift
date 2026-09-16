@@ -96,6 +96,12 @@ enum DatastoreSchema {
             try db.execute(sql: "ALTER TABLE audioTrack ADD COLUMN recordedAt DOUBLE")
         }
 
+        // Per-page background texture (dots, grids, …). Existing pages read
+        // back as plain via the NOT NULL DEFAULT.
+        migrator.registerMigration("v4_record_texture") { db in
+            try db.execute(sql: "ALTER TABLE record ADD COLUMN texture TEXT NOT NULL DEFAULT 'plain'")
+        }
+
         return migrator
     }
 }

@@ -31,19 +31,38 @@ public struct Record: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var title: String
     public var createdAt: Date
     public var modifiedAt: Date
+    /// Page background pattern. Defaults to plain so pre-texture backups
+    /// (which lack the key) still decode.
+    public var texture: PageTexture
 
     public init(
         id: UUID = UUID(),
         notebookId: UUID,
         title: String,
         createdAt: Date = Date(),
-        modifiedAt: Date = Date()
+        modifiedAt: Date = Date(),
+        texture: PageTexture = .plain
     ) {
         self.id = id
         self.notebookId = notebookId
         self.title = title
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.texture = texture
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, notebookId, title, createdAt, modifiedAt, texture
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        notebookId = try c.decode(UUID.self, forKey: .notebookId)
+        title = try c.decode(String.self, forKey: .title)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        modifiedAt = try c.decode(Date.self, forKey: .modifiedAt)
+        texture = (try? c.decodeIfPresent(PageTexture.self, forKey: .texture)) ?? .plain
     }
 }
 

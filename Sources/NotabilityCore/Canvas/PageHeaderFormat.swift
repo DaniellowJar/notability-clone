@@ -16,8 +16,8 @@ public struct PageHeaderFormat: Codable, Equatable, Sendable {
 
     public init(
         alignment: PageHeaderAlignment = .center,
-        dateFormat: String = "MMM d, yyyy",
-        timeFormat: String = "h:mm a"
+        dateFormat: String = PageHeaderFormat.defaultDateFormat,
+        timeFormat: String = PageHeaderFormat.defaultTimeFormat
     ) {
         self.alignment = alignment
         self.dateFormat = dateFormat
@@ -25,6 +25,10 @@ public struct PageHeaderFormat: Codable, Equatable, Sendable {
     }
 
     public static let `default` = PageHeaderFormat()
+
+    /// Built-in patterns used when the Settings fields are blank.
+    public static let defaultDateFormat = "MMM d, yyyy"
+    public static let defaultTimeFormat = "h:mm a"
 
     /// Display string for a record's creation date: "<date> · <time>".
     public func formatted(date: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {

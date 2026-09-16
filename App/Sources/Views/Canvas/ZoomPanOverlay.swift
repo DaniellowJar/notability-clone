@@ -2,48 +2,121 @@ import NotabilityCore
 import SwiftUI
 import UIKit
 
-/// Viewport-filling host for pinch-zoom and two-finger pan. The recognizers
-/// attach to the *window* (found via didMoveToWindow) rather than this view:
-/// a topmost overlay would swallow single-finger touches meant for ink,
-/// marquee, and blocks, while recognizers on a common ancestor observe every
-/// touch without intercepting any. Single-finger touches are never claimed
-/// (both recognizers require two touches + `cancelsTouchesInView = false`), so
-/// all existing single-finger behavior below is untouched.
+/// Viewport-filling host for Maps-style simultaneous zoom+drag. A single
+/// custom two-finger recognizer (attached to the window, found via
+/// didMoveToWindow) emits incremental scale-about-moving-anchor plus
+/// translation on every event. Two separate recognizers fought over the same
+/// touches (pinch recomputed from a fixed base while pan also fired, and
+/// per-event gating dropped mid-gesture frames) — that was the choppiness.
+///
+/// A topmost overlay can't be used: it would swallow single-finger touches
+/// meant for ink, marquee, and blocks. Recognizers on the common ancestor
+/// observe every touch without intercepting any, and both require two touches
+/// (`cancelsTouchesInView = false`), so single-finger behavior is untouched.
 struct ZoomPanOverlay: UIViewRepresentable {
     let session: CanvasSessionState
 
     func makeUIView(context: Context) -> ZoomPanHostView {
         let view = ZoomPanHostView()
-        view.onPinchBegan = { [weak session = session] in session?.pinchBegan() }
-        view.onPinchChanged = { [weak session = session] relativeScale, anchor in
-            session?.pinchChanged(
-                relativeScale: relativeScale,
-                anchorScreen: Point(x: anchor.x, y: anchor.y)
+        view.onZoomPan = { [weak session = session] ratio, translation, anchor in
+            session?.applyZoomPan(
+                scaleRatio: ratio,
+                anchorScreen: Point(x: anchor.x, y: anchor.y),
+                pan: Point(x: translation.x, y: translation.y)
             )
         }
-        view.onPinchEnded = { [weak session = session] in session?.pinchEnded() }
-        view.onPan = { [weak session = session] dx, dy in session?.panBy(Point(x: dx, y: dy)) }
         return view
     }
 
     func updateUIView(_ uiView: ZoomPanHostView, context: Context) {}
 }
 
-final class ZoomPanHostView: UIView {
-    var onPinchBegan: (() -> Void)?
-    var onPinchChanged: ((Double, CGPoint) -> Void)?
-    var onPinchEnded: (() -> Void)?
-    var onPan: ((Double, Double) -> Void)?
+/// Tracks exactly two touches, reporting incremental span ratio, midpoint
+/// translation, and midpoint anchor on every move. Fails cleanly otherwise.
+final class PinchPanGestureRecognizer: UIGestureRecognizer {
+    var onChange: ((scaleRatio: Double, translation: CGPoint, anchor: CGPoint) -> Void)?
 
-    private var pinch: UIPinchGestureRecognizer?
-    private var pan: UIPanGestureRecognizer?
+    private weak var host: UIView?
+    private var tracked: [UITouch] = []
+    private var lastSpan: CGFloat = 0
+    private var lastMid: CGPoint = .zero
+
+    init(host: UIView) {
+        self.host = host
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+    }
+
+    private func spanAndMid() -> (span: CGFloat, mid: CGPoint)? {
+        guard let host, tracked.count == 2 else { return nil }
+        let a = tracked[0].location(in: host)
+        let b = tracked[1].location(in: host)
+        let dx = a.x - b.x, dy = a.y - b.y
+        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        return (max(hypot(dx, dy), 1), mid)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        tracked.append(contentsOf: touches)
+        if tracked.count == 2, let sm = spanAndMid() {
+            lastSpan = sm.span
+            lastMid = sm.mid
+            state = .began
+        } else if tracked.count > 2 {
+            state = .failed
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesMoved(touches, with: event)
+        guard (state == .began || state == .changed), let sm = spanAndMid() else { return }
+        let ratio = sm.span / max(lastSpan, 1)
+        let dx = sm.mid.x - lastMid.x, dy = sm.mid.y - lastMid.y
+        lastSpan = sm.span
+        lastMid = sm.mid
+        onChange?(Double(ratio), CGPoint(x: dx, y: dy), sm.mid)
+        state = .changed
+    }
+
+    private func endTracking(_ touches: Set<UITouch>) {
+        tracked.removeAll { touches.contains($0) }
+        if tracked.count < 2 {
+            state = (state == .began || state == .changed) ? .ended : .failed
+            tracked = []
+        } else if let sm = spanAndMid() {
+            lastSpan = sm.span
+            lastMid = sm.mid
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesEnded(touches, with: event)
+        endTracking(touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesCancelled(touches, with: event)
+        endTracking(touches)
+    }
+
+    override func reset() {
+        super.reset()
+        tracked = []
+    }
+}
+
+final class ZoomPanHostView: UIView {
+    var onZoomPan: ((Double, CGPoint, CGPoint) -> Void)?
+
+    private var recognizer: PinchPanGestureRecognizer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         isOpaque = false
-        // Never intercept hit-testing itself; the window-level recognizers
-        // below observe touches while everything underneath keeps working.
+        // Never intercept hit-testing itself; the window-level recognizer
+        // observes touches while everything underneath keeps working.
         isUserInteractionEnabled = false
     }
 
@@ -54,66 +127,38 @@ final class ZoomPanHostView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         detach()
-        guard let window else { return }
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-        pinch.cancelsTouchesInView = false
-        pinch.delegate = self
-        window.addGestureRecognizer(pinch)
-        self.pinch = pinch
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        pan.minimumNumberOfTouches = 2
-        pan.maximumNumberOfTouches = 2
-        pan.cancelsTouchesInView = false
-        pan.delegate = self
-        window.addGestureRecognizer(pan)
-        self.pan = pan
+        guard window != nil else { return }
+        let recognizer = PinchPanGestureRecognizer(host: self)
+        recognizer.delegate = self
+        recognizer.onChange = { [weak self] ratio, translation, anchor in
+            self?.handleZoomPan(ratio: ratio, translation: translation, anchor: anchor)
+        }
+        window?.addGestureRecognizer(recognizer)
+        self.recognizer = recognizer
     }
 
     private func detach() {
-        if let pinch, let window = pinch.view {
-            window.removeGestureRecognizer(pinch)
+        if let recognizer, let window = recognizer.view {
+            window.removeGestureRecognizer(recognizer)
         }
-        if let pan, let window = pan.view {
-            window.removeGestureRecognizer(pan)
-        }
-        pinch = nil
-        pan = nil
+        recognizer = nil
     }
 
     /// Only handle gestures fully inside the canvas viewport with no modal
-    /// sheet up (a sheet means the user's attention is elsewhere).
-    private func shouldHandle(_ gesture: UIGestureRecognizer) -> Bool {
-        guard gesture.numberOfTouches == 2, let window = self.window else { return false }
+    /// sheet up (a sheet means the user's attention is elsewhere). Checked
+    /// once at the start — never mid-gesture, so frames can't drop out.
+    private func shouldHandle() -> Bool {
+        guard let window = self.window else { return false }
         var top = window.rootViewController
         while let presented = top?.presentedViewController { top = presented }
         if top != window.rootViewController { return false }
-        for i in 0..<2 {
-            let p = gesture.location(ofTouch: i, in: self)
-            guard bounds.contains(p) else { return false }
-        }
         return true
     }
 
-    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        switch gesture.state {
-        case .began:
-            guard shouldHandle(gesture) else { gesture.isEnabled = false; gesture.isEnabled = true; return }
-            onPinchBegan?()
-        case .changed:
-            guard shouldHandle(gesture) else { return }
-            onPinchChanged?(Double(gesture.scale), gesture.location(in: self))
-        case .ended, .cancelled, .failed:
-            onPinchEnded?()
-        default:
-            break
-        }
-    }
-
-    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard gesture.state == .changed, shouldHandle(gesture) else { return }
-        let translation = gesture.translation(in: self)
-        gesture.setTranslation(.zero, in: self)
-        onPan?(Double(translation.x), Double(translation.y))
+    private func handleZoomPan(ratio: Double, translation: CGPoint, anchor: CGPoint) {
+        guard shouldHandle() else { return }
+        guard bounds.contains(anchor) else { return }
+        onZoomPan?(ratio, translation, anchor)
     }
 }
 

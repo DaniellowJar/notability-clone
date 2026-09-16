@@ -62,8 +62,30 @@ public struct CanvasTransform: Codable, Equatable, Sendable {
         )
     }
 
+    /// One Maps-style frame: zoom about the moving anchor, then translate.
+    /// Applied from the CURRENT transform on every event — never recomputed
+    /// from a gesture-start base, which is what keeps simultaneous zoom+drag
+    /// smooth instead of jumpy.
+    public func zoomPanStep(scaleRatio: Double, anchorScreen: Point, pan: Point) -> CanvasTransform {
+        zoomed(to: scale * scaleRatio, anchorScreen: anchorScreen).panned(by: pan)
+    }
+
     public func panned(by delta: Point) -> CanvasTransform {
         CanvasTransform(scale: scale, offsetX: offsetX + delta.x, offsetY: offsetY + delta.y)
+    }
+
+    /// Backing-store scale for raster views (ink, tiles): display scale times
+    /// canvas zoom, so vector content re-rasterizes crisply instead of having
+    /// a 1x bitmap magnified. Floored at the display scale itself.
+    public static func rasterScale(screenScale: Double, zoom: Double) -> Double {
+        max(screenScale, 0.01) * max(zoom, 1)
+    }
+
+    /// Canvas-space Y of the viewport's bottom edge for the current transform.
+    /// Scrolling down (negative offsetY) pushes it past the content, which is
+    /// what makes the page grow ahead of the user instead of only behind ink.
+    public static func visibleBottom(viewportHeight: Double, offsetY: Double, scale: Double) -> Double {
+        (viewportHeight - offsetY) / max(scale, 0.01)
     }
 
     /// Infinite-canvas growth rule: content height never shrinks and always

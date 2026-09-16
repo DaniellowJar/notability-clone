@@ -61,7 +61,7 @@ private struct CanvasBlockView: View {
         case .image:
             ImageBlockView(block: block)
         case .pdfPage:
-            PDFBlockView(block: block)
+            PDFBlockView(block: block, zoomScale: session.transform.scale)
         case .calc:
             CalcBlockView(session: session, block: block)
         default:

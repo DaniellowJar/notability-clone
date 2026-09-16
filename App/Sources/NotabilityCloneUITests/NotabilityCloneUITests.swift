@@ -268,6 +268,41 @@ final class NotabilityCloneUITests: XCTestCase {
                       "letter marquee must zoom to fit the area")
     }
 
+    func testPageTexturePersists() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore"]
+        app.launch()
+
+        // Notebook → New Page → canvas (fresh pages start plain).
+        XCTAssertTrue(presentSheet(in: app, byTapping: "addNotebook",
+                                   waitingFor: app.textFields["notebookTitle"]),
+                      "notebook title field should appear")
+        let notebookField = app.textFields["notebookTitle"]
+        notebookField.tap()
+        notebookField.typeText("Texture")
+        app.buttons["createNotebook"].tap()
+        XCTAssertTrue(app.buttons["addPage"].waitForExistence(timeout: 8))
+        app.buttons["addPage"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Texture"))
+        XCTAssertTrue(app.waitForDebug(label: "texture=plain", timeout: 5))
+
+        // Switch the page background to dots.
+        app.buttons["toolTexture"].tap()
+        let dots = app.buttons["texture-dots"]
+        XCTAssertTrue(dots.waitForExistence(timeout: 5), "texture picker should list dots")
+        dots.tap()
+        XCTAssertTrue(app.waitForDebug(label: "texture=dots", timeout: 5),
+                      "texture switch must apply to the page")
+
+        // Leave and re-enter: the texture persists per page.
+        app.navigationBars.firstMatch.buttons["Texture"].tap()
+        XCTAssertTrue(app.staticTexts["Page 1"].waitForExistence(timeout: 5))
+        app.staticTexts["Page 1"].tap()
+        XCTAssertTrue(app.waitForCanvas(backButtonLabel: "Texture"))
+        XCTAssertTrue(app.waitForDebug(label: "texture=dots", timeout: 5),
+                      "page texture must persist across re-entry")
+    }
+
     /// Reveals the row's Delete action and taps it. A short right-to-left drag
     /// is used on purpose: a full-row swipe triggers iOS's full-swipe delete,
     /// which removes the row without a Delete button ever appearing (and this

@@ -101,6 +101,10 @@ struct SettingsView: View {
                                 AppSettings.shared.pageTimeFormat = new
                             }
                         }
+                    Text("Header preview: \(headerPreview)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("headerPreview")
                     if !dateFormat.isEmpty, !PageHeaderFormat.isValidFormat(dateFormat) {
                         Text("Date format not recognized — keeping previous value.")
                             .font(.footnote)
@@ -153,6 +157,17 @@ struct SettingsView: View {
         }
     }
 
+    /// Live preview of the page header with the current field values
+    /// (blank falls back to the built-in defaults, same as the canvas).
+    private var headerPreview: String {
+        let format = PageHeaderFormat(
+            alignment: PageHeaderAlignment(rawValue: headerAlignment) ?? .center,
+            dateFormat: dateFormat.isEmpty ? PageHeaderFormat.defaultDateFormat : dateFormat,
+            timeFormat: timeFormat.isEmpty ? PageHeaderFormat.defaultTimeFormat : timeFormat
+        )
+        return format.formatted(date: Date())
+    }
+
     private func load() {
         let secrets = AppSecrets.shared
         deepInfraKey = secrets.deepInfraKey ?? ""
@@ -161,8 +176,10 @@ struct SettingsView: View {
         ownCloudPassword = secrets.ownCloudPassword ?? ""
         allowFingerDrawing = AppSettings.shared.allowFingerDrawing
         headerAlignment = AppSettings.shared.pageHeaderAlignmentRaw
-        dateFormat = AppSettings.shared.pageDateFormat
-        timeFormat = AppSettings.shared.pageTimeFormat
+        let storedDate = AppSettings.shared.pageDateFormat
+        dateFormat = storedDate.isEmpty ? PageHeaderFormat.defaultDateFormat : storedDate
+        let storedTime = AppSettings.shared.pageTimeFormat
+        timeFormat = storedTime.isEmpty ? PageHeaderFormat.defaultTimeFormat : storedTime
     }
 
     private func save() {

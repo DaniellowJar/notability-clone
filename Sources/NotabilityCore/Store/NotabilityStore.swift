@@ -96,15 +96,16 @@ public final class NotabilityStore: @unchecked Sendable {
             let record = Record(notebookId: notebook.id, title: recordTitle)
             try db.execute(
                 sql: """
-                INSERT INTO record (id, notebookId, title, createdAt, modifiedAt)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO record (id, notebookId, title, createdAt, modifiedAt, texture)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     record.id.uuidString,
                     record.notebookId.uuidString,
                     record.title,
                     record.createdAt.timeIntervalSinceReferenceDate,
-                    record.modifiedAt.timeIntervalSinceReferenceDate
+                    record.modifiedAt.timeIntervalSinceReferenceDate,
+                    record.texture.rawValue
                 ]
             )
             return (notebook, record)
@@ -121,15 +122,16 @@ public final class NotabilityStore: @unchecked Sendable {
             let record = Record(notebookId: notebookId, title: title)
             try db.execute(
                 sql: """
-                INSERT INTO record (id, notebookId, title, createdAt, modifiedAt)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO record (id, notebookId, title, createdAt, modifiedAt, texture)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     record.id.uuidString,
                     record.notebookId.uuidString,
                     record.title,
                     record.createdAt.timeIntervalSinceReferenceDate,
-                    record.modifiedAt.timeIntervalSinceReferenceDate
+                    record.modifiedAt.timeIntervalSinceReferenceDate,
+                    record.texture.rawValue
                 ]
             )
             return record
@@ -152,6 +154,27 @@ public final class NotabilityStore: @unchecked Sendable {
             try db.execute(
                 sql: "UPDATE record SET title = ?, modifiedAt = ? WHERE id = ?",
                 arguments: [title, Date().timeIntervalSinceReferenceDate, id.uuidString]
+            )
+        }
+    }
+
+    public func texture(for recordId: UUID) throws -> PageTexture {
+        try writer.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT texture FROM record WHERE id = ?", arguments: [recordId.uuidString]),
+                  let raw = row["texture"] as String?,
+                  let texture = PageTexture(rawValue: raw) else {
+                return .plain
+            }
+            return texture
+        }
+    }
+
+    /// Sets a record's background texture (bumps `modifiedAt` so it syncs).
+    public func setRecordTexture(_ texture: PageTexture, for recordId: UUID) throws {
+        try writer.write { db in
+            try db.execute(
+                sql: "UPDATE record SET texture = ?, modifiedAt = ? WHERE id = ?",
+                arguments: [texture.rawValue, Date().timeIntervalSinceReferenceDate, recordId.uuidString]
             )
         }
     }
@@ -472,13 +495,14 @@ public final class NotabilityStore: @unchecked Sendable {
                 guard exists == 0 else { continue }
                 try db.execute(
                     sql: """
-                    INSERT INTO record (id, notebookId, title, createdAt, modifiedAt)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO record (id, notebookId, title, createdAt, modifiedAt, texture)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     arguments: [
                         record.id.uuidString, record.notebookId.uuidString, record.title,
                         record.createdAt.timeIntervalSinceReferenceDate,
-                        record.modifiedAt.timeIntervalSinceReferenceDate
+                        record.modifiedAt.timeIntervalSinceReferenceDate,
+                        record.texture.rawValue
                     ]
                 )
                 summary.records += 1
@@ -584,7 +608,8 @@ public final class NotabilityStore: @unchecked Sendable {
             notebookId: UUID(uuidString: row["notebookId"] as String)!,
             title: row["title"] as String,
             createdAt: Date(timeIntervalSinceReferenceDate: row["createdAt"] as Double),
-            modifiedAt: Date(timeIntervalSinceReferenceDate: row["modifiedAt"] as Double)
+            modifiedAt: Date(timeIntervalSinceReferenceDate: row["modifiedAt"] as Double),
+            texture: PageTexture(rawValue: (row["texture"] as String?) ?? "plain") ?? .plain
         )
     }
 

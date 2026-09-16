@@ -18,6 +18,7 @@ struct CanvasToolbarView: View {
     @State private var showPhotoLibrary = false
     @State private var showCamera = false
     @State private var showImporter = false
+    @State private var showTexturePicker = false
     @State private var cameraError: String?
 
     var body: some View {
@@ -68,6 +69,7 @@ struct CanvasToolbarView: View {
             ToolButton(systemImage: "lasso", id: "toolSelect") { session.startSelectTool() }
             ToolButton(systemImage: "function", id: "toolCalc") { session.startPlaceCalc() }
             ToolButton(systemImage: "textformat.size", id: "toolLetter") { session.startLetterArea() }
+            ToolButton(systemImage: "square.grid.2x2", id: "toolTexture") { showTexturePicker = true }
             Divider().frame(height: 20)
             ToolButton(systemImage: isRecording ? "stop.circle.fill" : "mic", id: "toolRecord", tint: isRecording ? .red : .primary) { onToggleRecord() }
             ToolButton(systemImage: "waveform", id: "toolTranscript") { onShowTranscript() }
@@ -89,6 +91,32 @@ struct CanvasToolbarView: View {
             CameraPicker { image in
                 if let data = image.jpegData(compressionQuality: 0.9), let ref = saveImage(data) {
                     session.startPlaceImage(ref: ref)
+                }
+            }
+        }
+        .sheet(isPresented: $showTexturePicker) {
+            NavigationStack {
+                List(PageTexture.allCases, id: \.self) { texture in
+                    Button {
+                        session.setPageTexture(texture)
+                        showTexturePicker = false
+                    } label: {
+                        HStack {
+                            Text(texture.title)
+                            Spacer()
+                            if session.pageTexture == texture {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("texture-\(texture.rawValue)")
+                }
+                .navigationTitle("Page background")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showTexturePicker = false }
+                    }
                 }
             }
         }
