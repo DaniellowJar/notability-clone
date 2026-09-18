@@ -56,10 +56,9 @@ struct RecordCanvasView: View {
                     )
                     .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                     .allowsHitTesting(session.mode.allowsInkHitTesting)
-                    InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal, liveStroke: inkStore.liveStroke, zoomScale: session.transform.scale)
+                    InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal, liveStroke: inkStore.liveStroke, zoomScale: session.transform.scale, rewriteToken: session.drawingRewriteToken)
                         .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                         .allowsHitTesting(false)
-                        .opacity(session.letterArea != nil ? 1 : 0)
 
                     captureOverlay
 

@@ -57,7 +57,7 @@ private struct CanvasBlockView: View {
     private var content: some View {
         switch block.payload {
         case .text:
-            TextBlockView(session: session, block: block, isSelected: isSelected)
+            TextBlockView(session: session, block: block, isSelected: isSelected, zoomScale: session.transform.scale)
         case .image:
             ImageBlockView(block: block)
         case .pdfPage:

@@ -5,6 +5,9 @@
 A personal, self-hosted Notability alternative for iPad — SwiftUI, sideloaded via
 LiveContainer (free Apple ID, **no Apple Developer Program account required**).
 
+> Repo URL, where the keys live (home `.env`), and how GitHub Actions compiles
+> it: see [`docs/REPO.md`](docs/REPO.md).
+
 ## Structure
 
 | Path | What |
