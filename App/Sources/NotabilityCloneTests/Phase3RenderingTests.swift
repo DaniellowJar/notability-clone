@@ -1,5 +1,6 @@
 import NotabilityCore
 import PencilKit
+import UIKit
 import XCTest
 @testable import NotabilityClone
 
@@ -66,14 +67,30 @@ final class Phase3RenderingTests: XCTestCase {
         XCTAssertEqual(session.blocks[0].kind, .text)
     }
 
-    func testInkBackingScaleTracksZoom() {
-        // The raster backing must match display × zoom so zoomed ink
-        // re-rasterizes from vectors instead of magnifying a 1x bitmap.
+    func testInkRendersVectorLayers() {
+        // Strokes must render as vector CAShapeLayers (Core Animation
+        // rasterizes them at the composited resolution) rather than a 1x
+        // backing store that the parent zoom would magnify into pixels.
         let view = InkCanvasView()
-        let screen = Double(UIScreen.main.scale)
-        view.zoomScale = 1
-        XCTAssertEqual(Double(view.contentScaleFactor), screen * 1, accuracy: 0.001)
+        let stroke = StrokeData(
+            points: [
+                StrokePoint(location: Point(x: 0, y: 0), timestampOffset: 0, width: 3, force: 1, azimuth: 0, altitude: 45),
+                StrokePoint(location: Point(x: 10, y: 10), timestampOffset: 0, width: 3, force: 1, azimuth: 0, altitude: 45),
+            ],
+            colorHex: "#FF0000", baseWidth: 3
+        )
+        view.strokes = [stroke]
+
+        let shapes = (view.layer.sublayers ?? []).compactMap { $0 as? CAShapeLayer }
+        let strokeLayers = shapes.filter { $0.path != nil }
+        XCTAssertEqual(strokeLayers.count, 1, "each stroke is a vector CAShapeLayer")
+        XCTAssertEqual(Double(strokeLayers[0].lineWidth), 3, accuracy: 0.001)
+        XCTAssertNotNil(strokeLayers[0].strokeColor)
+
+        // Vector layers are resolution-independent, so zoom must not require a
+        // backing-store rescale.
+        let backingScale = view.contentScaleFactor
         view.zoomScale = 2
-        XCTAssertEqual(Double(view.contentScaleFactor), screen * 2, accuracy: 0.001)
+        XCTAssertEqual(view.contentScaleFactor, backingScale, "zoom must not rescale the backing store")
     }
 }
