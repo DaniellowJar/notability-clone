@@ -145,8 +145,8 @@ final class LetterModeV2Tests: XCTestCase {
         }
         // Body letters fill exactly [cursor.y, cursor.y + 12]; the tail hangs
         // below the committed baseline instead of squashing the whole line.
-        XCTAssertEqual(normalBounds?.size.height, 12, accuracy: 0.001)
-        XCTAssertEqual(normalBounds?.minY, 90, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(normalBounds).size.height, 12, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(normalBounds).minY, 90, accuracy: 0.001)
         let tail = try XCTUnwrap(tailBounds)
         XCTAssertGreaterThan(tail.maxY, 102, "descender extends below the committed baseline")
         // Tail keeps its scaled proportions (not compacted): 30px × 12/40.
