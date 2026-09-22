@@ -23,18 +23,37 @@ final class CanvasSessionState {
 
     // MARK: - Letter Mode v2 (write-zoom-commit)
 
-    /// Seconds of no new ink before the current line commits.
-    static let letterSettleDelay = 0.8
+    /// Seconds of no new ink before the current line commits (fallback path —
+    /// the primary commit trigger is starting a new letter, see
+    /// `handleLetterStrokeBegin`).
+    static let letterSettleDelay = 0.4
+    /// Stroke-to-stroke silence (s) from which a new stroke counts as a new
+    /// letter and force-commits the ink before it. Shorter gaps are treated
+    /// as one letter's own strokes (dots, t-crosses) and never split it.
+    static let letterImmediateGap = 0.35
     /// Viewport fraction where the follow camera parks the writing position.
     static let letterFollowThreshold = 0.7
-    /// Committed glyph height in page points at 100% zoom.
-    static let letterCommittedHeight = 12.0
-    /// Gap below a committed line before the next one starts.
-    static let letterLineGap = 8.0
-    /// Horizontal gap after a committed segment before the next one starts.
-    static let letterWordGap = 8.0
+    /// Committed glyph height in page points at 100% zoom (ascender-to-baseline).
+    static let letterCommittedHeight = LetterMode.targetGlyphHeight
+    /// On-screen (unzoomed) height of naturally written letters, used only to
+    /// tell a lone diacritic from a lone small letter when a settle commits
+    /// one cluster.
+    static let naturalGlyphScreenHeight = 60.0
     /// Screen offset of the letter area's top edge when zoomed to fit.
     static let letterTopInset = 140.0
+
+    /// A committed letter (its stroke blocks) popped by the backspace button.
+    struct LetterUndoGroup {
+        var ids: [UUID]
+        /// Committed bounds of this letter (omit the diacritic offset).
+        var bounds: Rect
+        /// letterCursor.y of the line this letter sits on.
+        var lineTop: Double
+        /// Normalize scale and raw baseline of that line's commit — reused to
+        /// map a late-drawn diacritic back onto this letter.
+        var scale: Double
+        var rawBaseline: Double
+    }
 
     /// Active writing area in canvas points; nil when letter mode is off.
     var letterArea: Rect?
@@ -43,6 +62,11 @@ final class CanvasSessionState {
     var letterCursor = Point(x: 0, y: 0)
     /// Store stroke-block count where the current line started.
     var letterLineStartCount = 0
+    /// Committed letters, for the backspace button and late-diacritic
+    /// merge-back.
+    var letterUndoGroups: [LetterUndoGroup] = []
+    /// CFAbsoluteTime of the last completed letter-mode stroke.
+    var letterLastActivity: TimeInterval = 0
     /// Bumped whenever the canvas drawing must be rebuilt from the store.
     var drawingRewriteToken = 0
     private var letterCommitWorkItem: DispatchWorkItem?
@@ -212,6 +236,8 @@ final class CanvasSessionState {
         letterArea = rect
         letterCursor = Point(x: rect.minX, y: rect.minY)
         letterLineStartCount = (try? store.strokeBlocks(in: recordID).count) ?? 0
+        letterUndoGroups = []
+        letterLastActivity = 0
         mode = .draw
     }
 
@@ -222,6 +248,7 @@ final class CanvasSessionState {
         letterCommitWorkItem?.cancel()
         letterCommitWorkItem = nil
         letterArea = nil
+        letterUndoGroups = []
     }
 
     /// Called with the newest captured point (canvas coordinates) while letter
@@ -245,7 +272,35 @@ final class CanvasSessionState {
             }
         }
         ensureContentHeight(bottom: y + h / s * 0.5)
+        letterLastActivity = CFAbsoluteTimeGetCurrent()
         scheduleLetterCommit()
+    }
+
+    /// First point of a newly started stroke in letter mode. After enough
+    /// silence this is "a new letter begins": force-commit everything before
+    /// it — unless the stroke starts high on the line, which is more likely
+    /// its own diacritic (i-dot, j-dot, Š, ż) than the next letter, so the
+    /// fallback timer decides. Diacritics drawn within the silence window
+    /// never hit this path at all.
+    func handleLetterStrokeBegin(x: Double, y: Double) {
+        guard let store, let recordID, letterArea != nil else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        let silence = now - letterLastActivity
+        letterLastActivity = now
+        guard silence >= Self.letterImmediateGap else { return }
+        let all = (try? store.strokeBlocks(in: recordID)) ?? []
+        let start = min(letterLineStartCount, all.count)
+        guard start < all.count else { return }
+        var box = all[start].frame
+        for b in all[(start + 1)...] { box = Rect.union(box, b.frame) }
+        guard box.size.height > 0 else { return }
+        if y >= box.minY + box.size.height * 0.6 {
+            // Starting in the baseline band: next letter, commit what came before.
+            commitLetterLine()
+        } else {
+            // High start: likely a late diacritic, keep the line together.
+            scheduleLetterCommit()
+        }
     }
 
     func scheduleLetterCommit() {
@@ -256,8 +311,12 @@ final class CanvasSessionState {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.letterSettleDelay, execute: work)
     }
 
-    /// Normalize the settled line to 12px in place (same block IDs, stable
-    /// counts so undo math keeps working), then request a drawing rebuild.
+    /// Normalize the settled line to the committed glyph height, anchored on
+    /// its baseline so descenders (j, g, q) hang below the baseline instead of
+    /// inflating and shrinking everything. Also scales stroke widths by the
+    /// same factor (raw capture ink keeps its fat width otherwise), records
+    /// per-letter undo groups for backspace, and advances the cursor with a
+    /// proportional (glyph-height-relative) gap.
     func commitLetterLine() {
         guard let store, let recordID, let area = letterArea else { return }
         letterCommitWorkItem?.cancel()
@@ -276,40 +335,192 @@ final class CanvasSessionState {
             letterLineStartCount = all.count
             return
         }
-        var box = inArea[0].frame
-        for b in inArea.dropFirst() { box = Rect.union(box, b.frame) }
-        let scale = LetterMode.normalizeScale(lineHeight: box.size.height, targetHeight: Self.letterCommittedHeight)
-        let anchor = letterCursor
-        do {
-            for block in inArea {
-                guard case .stroke(let strokes, let text, let corrected) = block.payload else { continue }
-                let mapped = strokes.map { s -> StrokeData in
-                    var c = s
-                    c.points = s.points.map { pt in
-                        var q = pt
-                        q.location = Point(
-                            x: anchor.x + (pt.location.x - box.minX) * scale,
-                            y: anchor.y + (pt.location.y - box.minY) * scale
-                        )
-                        return q
-                    }
-                    // Fresh canonical geometry; stale overlays would misrender.
-                    c.correctedPoints = nil
-                    c.transform = nil
-                    return c
-                }
-                try store.updateBlockPayload(block.id, payload: .stroke(mapped, recognizedText: text, corrected: corrected))
+        let entries: [(block: CanvasBlock, stroke: StrokeData, text: String, corrected: Bool)] = inArea.compactMap { block in
+            guard case .stroke(let list, let text, let corrected) = block.payload, let s = list.first else { return nil }
+            return (block, s, text, corrected)
+        }
+        guard !entries.isEmpty else {
+            letterLineStartCount = all.count
+            return
+        }
+        let clusters = LetterMode.letterClusters(strokes: entries.map(\.stroke))
+        let bounds = clusters.compactMap(LetterMode.clusterBounds)
+        let diacritics = LetterMode.diacriticIndices(bounds: bounds)
+
+        // A settle split a letter from its own diacritic (the i-dot drawn long
+        // after): the line is diacritic-only — fold it into the last committed
+        // letter instead of publishing a blob of its own.
+        if !bounds.isEmpty, diacritics.count == bounds.count {
+            foldDiacritic(entries: entries,
+                          bounds: bounds,
+                          finalCount: all.count, store: store)
+            return
+        }
+        guard let metrics = LetterMode.lineMetrics(
+            clusters: clusters, diacritics: diacritics, targetHeight: Self.letterCommittedHeight
+        ) else {
+            letterLineStartCount = all.count
+            return
+        }
+        // A lone tiny cluster can still be a stranded diacritic the size
+        // heuristic missed — judge it against the canvas-scale estimate.
+        if clusters.count == 1, bounds.indices.contains(0) {
+            let natural = LetterMode.naturalWritingHeight(
+                screenHeight: Self.naturalGlyphScreenHeight, scale: transform.scale
+            )
+            if bounds[0].size.height < 0.4 * natural {
+                foldDiacritic(entries: entries,
+                              bounds: bounds,
+                              finalCount: all.count, store: store)
+                return
             }
+        }
+
+        let scale = metrics.scale
+        let box = clusters.flatMap { $0.map(\.bounds) }.reduce(bounds[0]) { Rect.union($0, $1) }
+        let rawBaseline = metrics.baseline
+        let anchor = letterCursor
+        /// Baseline-anchored normalize: letter bodies land exactly
+        /// [cursor.y, cursor.y + 12]; descenders hang below and diacritics
+        /// above, at their natural relative offsets from the baseline.
+        func map(_ pt: Point) -> Point {
+            Point(
+                x: anchor.x + (pt.x - box.minX) * scale,
+                y: anchor.y + Self.letterCommittedHeight + (pt.y - rawBaseline) * scale
+            )
+        }
+        func mapStroke(_ s: StrokeData) -> StrokeData {
+            var c = s
+            c.points = s.points.map {
+                var q = $0
+                q.location = map($0.location)
+                q.width *= scale
+                return q
+            }
+            c.baseWidth *= scale
+            // Fresh canonical geometry; stale overlays would misrender.
+            c.correctedPoints = nil
+            c.transform = nil
+            return c
+        }
+
+        do {
+            var groups: [LetterUndoGroup] = []
+            var consumed = 0
+            for (ci, cluster) in clusters.enumerated() {
+                let slice = Array(entries[consumed..<(consumed + cluster.count)])
+                consumed += cluster.count
+                let mapped = slice.map { mapStroke($0.stroke) }
+                let mappedBounds = LetterMode.clusterBounds(mapped) ?? bounds[ci]
+                let ids = slice.map(\.block.id)
+                if diacritics.contains(ci),
+                   let gi = groups.lastIndex(where: {
+                       $0.bounds.maxX >= mappedBounds.minX - LetterMode.wordGap(targetHeight: Self.letterCommittedHeight)
+                   }) {
+                    groups[gi].ids += ids
+                    groups[gi].bounds = Rect.union(groups[gi].bounds, mappedBounds)
+                } else {
+                    groups.append(LetterUndoGroup(
+                        ids: ids, bounds: mappedBounds, lineTop: anchor.y,
+                        scale: scale, rawBaseline: rawBaseline
+                    ))
+                }
+                for (i, entry) in slice.enumerated() {
+                    try store.updateBlockPayload(
+                        entry.block.id,
+                        payload: .stroke([mapped[i]], recognizedText: entry.text, corrected: entry.corrected)
+                    )
+                    try store.updateBlockFrame(entry.block.id, frame: mappedBounds)
+                }
+            }
+            letterUndoGroups += groups
             // Advance along the line; wrap down only at the area's right edge.
-            letterCursor.x += box.size.width * scale + Self.letterWordGap
-            if letterCursor.x >= area.maxX - Self.letterWordGap {
-                letterCursor = Point(x: area.minX, y: letterCursor.y + Self.letterCommittedHeight + Self.letterLineGap)
+            letterCursor.x += box.size.width * scale + LetterMode.wordGap(targetHeight: Self.letterCommittedHeight)
+            if letterCursor.x >= area.maxX - LetterMode.wordGap(targetHeight: Self.letterCommittedHeight) {
+                letterCursor = Point(
+                    x: area.minX,
+                    y: letterCursor.y + Self.letterCommittedHeight + LetterMode.lineGap(targetHeight: Self.letterCommittedHeight)
+                )
             }
             letterLineStartCount = (try? store.strokeBlocks(in: recordID).count) ?? 0
             drawingRewriteToken += 1
         } catch {
             errorMessage = "Could not commit letter line: \(error.localizedDescription)"
         }
+    }
+
+    /// Late-drawn diacritic (i-dot, j-dot, Š, ż) that arrived after its letter
+    /// already committed: rewrite the same stroke blocks so the mark sits
+    /// where the letter's own commit would have placed it — top-centered over
+    /// the last committed letter — and add its blocks to that letter's undo
+    /// group so backspace removes it together with the letter.
+    private func foldDiacritic(
+        entries: [(block: CanvasBlock, stroke: StrokeData, text: String, corrected: Bool)],
+        bounds: [Rect],
+        finalCount: Int,
+        store: NotabilityStore
+    ) {
+        guard !letterUndoGroups.isEmpty, let diaRaw = bounds.first else {
+            // Nothing committed yet — leave raw ink in the area; a later
+            // commit with context can still place it properly.
+            letterLineStartCount = finalCount
+            drawingRewriteToken += 1
+            return
+        }
+        var last = letterUndoGroups.removeLast()
+        let scale = last.scale
+        let letter = last.bounds
+        let dia = bounds.first!
+        // Centered horizontally over the letter, its top a fraction of the
+        // glyph height above the letter's top (accent position, not apxis).
+        let anchorX = letter.minX + (letter.size.width - dia.size.width * scale) / 2
+        let diaHeight = dia.size.height * scale
+        let anchorY = letter.minY - diaHeight - 0.15 * Self.letterCommittedHeight
+        do {
+            var ids: [UUID] = []
+            for entry in entries {
+                guard case .stroke(let list, _, _) = entry.block.payload, let stroke = list.first else { continue }
+                var c = stroke
+                c.points = stroke.points.map {
+                    var q = $0
+                    q.location = Point(
+                        x: anchorX + ($0.location.x - diaRaw.minX) * scale,
+                        y: anchorY + ($0.location.y - diaRaw.minY) * scale
+                    )
+                    q.width *= scale
+                    return q
+                }
+                c.baseWidth *= scale
+                c.correctedPoints = nil
+                c.transform = nil
+                ids.append(entry.block.id)
+                try store.updateBlockPayload(
+                    entry.block.id,
+                    payload: .stroke([c], recognizedText: entry.text, corrected: entry.corrected)
+                )
+                try store.updateBlockFrame(entry.block.id, frame: LetterMode.clusterBounds([c]) ?? entry.block.frame)
+            }
+            last.ids += ids
+            // The dot sits above the letter's top — it doesn't widen the
+            // group's horizontal bounds, so don't union them (that would mix
+            // raw coordinates into mapped bounds).
+            letterUndoGroups.append(last)
+            drawingRewriteToken += 1
+        } catch {
+            errorMessage = "Could not fold diacritic: \(error.localizedDescription)"
+        }
+        letterLineStartCount = finalCount
+    }
+
+    /// Backspace button: delete the most-recently committed letter (with any
+    /// diacritics folded into it) and restore the cursor to its position.
+    func letterBackspace() {
+        guard let store, let recordID, letterArea != nil,
+              let group = letterUndoGroups.popLast() else { return }
+        for id in group.ids { try? store.deleteBlock(id) }
+        letterCursor = Point(x: group.bounds.minX, y: group.lineTop)
+        letterLineStartCount = (try? store.strokeBlocks(in: recordID).count) ?? 0
+        drawingRewriteToken += 1
     }
 
     func cancelTool() {
@@ -322,6 +533,7 @@ final class CanvasSessionState {
         letterCommitWorkItem?.cancel()
         letterCommitWorkItem = nil
         letterArea = nil
+        letterUndoGroups = []
     }
 
     // MARK: - Area selection

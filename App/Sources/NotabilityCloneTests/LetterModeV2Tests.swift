@@ -65,10 +65,18 @@ final class LetterModeV2Tests: XCTestCase {
         }
         XCTAssertEqual(bHeight ?? -1, 10.5, accuracy: 0.001, "35px stroke scaled by 12/40")
         XCTAssertEqual(session.drawingRewriteToken, 1, "canvas must rebuild from the store")
-        // 45px-wide union scaled by 12/40 advances x by 13.5 + 8 gap; no wrap.
-        XCTAssertEqual(session.letterCursor.x, 21.5, accuracy: 1e-9)
+        // 45px-wide union scaled by 12/40 advances x by 13.5 + proportional gap (0.4×12=4.8).
+        XCTAssertEqual(session.letterCursor.x, 18.3, accuracy: 1e-9)
         XCTAssertEqual(session.letterCursor.y, 90, accuracy: 1e-9)
         XCTAssertEqual(session.letterLineStartCount, 2)
+        // Ink width scales with the geometry — unscaled would render fat letters.
+        for block in strokes {
+            guard case .stroke(let list, _, _) = block.payload, let s = list.first else {
+                return XCTFail("expected stroke payload")
+            }
+            XCTAssertEqual(s.baseWidth, 0.6, accuracy: 0.001)
+            XCTAssertTrue(s.points.allSatisfy { abs($0.width - 0.6) < 0.001 })
+        }
     }
 
     func testCommitSkipsStrokesOutsideArea() throws {
@@ -106,9 +114,110 @@ final class LetterModeV2Tests: XCTestCase {
         session.letterLineStartCount = 0
         session.commitLetterLine()
 
-        // 190 + 20*0.3 + 8 = 204 >= 200 - 8 → wrap to the next line.
+        // 190 + 20*0.3 + 0.4*12 = 200.8 >= 200 - 4.8 → wrap to the next line.
         XCTAssertEqual(session.letterCursor.x, 0, accuracy: 1e-9)
-        XCTAssertEqual(session.letterCursor.y, 90 + 12 + 8, accuracy: 1e-9)
+        XCTAssertEqual(session.letterCursor.y, 90 + LetterMode.lineGap(targetHeight: 12) + 12, accuracy: 1e-9)
+    }
+
+    func testCommitAnchorsBaselineAndLeavesRoomForDescenders() throws {
+        let session = CanvasSessionState()
+        session.load(recordID: recordID, store: store)
+
+        // Normal letter (10..30 x, 100..140 y) and a separate j-tail stroke
+        // reaching 20px past the common bottom.
+        _ = try addStrokeBlock(stroke(x0: 10, x1: 30, y0: 100, y1: 140),
+                               frame: Rect(x: 10, y: 100, width: 20, height: 40))
+        _ = try addStrokeBlock(stroke(x0: 50, x1: 70, y0: 130, y1: 160),
+                               frame: Rect(x: 50, y: 130, width: 20, height: 30))
+        session.letterArea = Rect(x: 0, y: 90, width: 200, height: 120)
+        session.letterCursor = Point(x: 0, y: 90)
+        session.letterLineStartCount = 0
+        session.commitLetterLine()
+
+        let strokes = try store.strokeBlocks(in: recordID)
+        var normalBounds: Rect?
+        var tailBounds: Rect?
+        for block in strokes {
+            guard case .stroke(let list, _, _) = block.payload, let s = list.first else {
+                return XCTFail("expected stroke payload")
+            }
+            if s.bounds.minX < 30 { normalBounds = s.bounds } else { tailBounds = s.bounds }
+        }
+        // Body letters fill exactly [cursor.y, cursor.y + 12]; the tail hangs
+        // below the committed baseline instead of squashing the whole line.
+        XCTAssertEqual(normalBounds?.size.height, 12, accuracy: 0.001)
+        XCTAssertEqual(normalBounds?.minY, 90, accuracy: 0.001)
+        let tail = try XCTUnwrap(tailBounds)
+        XCTAssertGreaterThan(tail.maxY, 102, "descender extends below the committed baseline")
+        // Tail keeps its scaled proportions (not compacted): 30px × 12/40.
+        XCTAssertEqual(tail.size.height, 9, accuracy: 0.001)
+    }
+
+    func testLateDiacriticFoldsIntoLastCommittedLetter() throws {
+        let session = CanvasSessionState()
+        session.load(recordID: recordID, store: store)
+
+        // Letter commits alone.
+        _ = try addStrokeBlock(stroke(x0: 10, x1: 30, y0: 100, y1: 140),
+                               frame: Rect(x: 10, y: 100, width: 20, height: 40))
+        session.letterArea = Rect(x: 0, y: 90, width: 200, height: 120)
+        session.letterCursor = Point(x: 0, y: 90)
+        session.letterLineStartCount = 0
+        session.commitLetterLine()
+        XCTAssertEqual(try store.strokeBlocks(in: recordID).count, 1)
+        let cursorAfterLetter = session.letterCursor.x
+
+        // The i-dot drawn later, as its own commit — must fold on top of the
+        // letter, not become an inflated blob of its own.
+        let dot = try addStrokeBlock(
+            stroke(x0: 15, x1: 16, y0: 88, y1: 90),
+            frame: Rect(x: 15, y: 88, width: 1, height: 2)
+        )
+        session.letterLineStartCount = 1
+        session.commitLetterLine()
+
+        let strokeCount = try store.strokeBlocks(in: recordID).count
+        XCTAssertEqual(strokeCount, 2, "dot keeps its block, count stable")
+        XCTAssertEqual(session.letterCursor.x, cursorAfterLetter, "cursor does not advance for a folded dot")
+        let blocks = try store.strokeBlocks(in: recordID)
+        let dotPayload = blocks.first { $0.id == dot.id }
+        guard case .stroke(let list, _, _) = dotPayload?.payload, let dotInk = list.first else {
+            return XCTFail("expected dot stroke payload")
+        }
+        XCTAssertTrue(dotInk.bounds.maxY < 90, "dot folded above the committed letter's top")
+        // DOT: raw width 1 → 0.3, centered over the 6px-wide letter.
+        XCTAssertEqual(dotInk.bounds.minX, letterFoldX(width: 6, dotW: dotInk.bounds.size.width), accuracy: 0.001)
+    }
+
+    /// X position the folding math should produce: centered over the letter.
+    private func letterFoldX(width: Double, dotW: Double) -> Double { (width - dotW) / 2 }
+
+    func testBackspaceDeletesLastCommittedLetterAndRestoresCursor() throws {
+        let session = CanvasSessionState()
+        session.load(recordID: recordID, store: store)
+        session.letterArea = Rect(x: 0, y: 90, width: 200, height: 200)
+        session.letterCursor = Point(x: 0, y: 90)
+        session.letterLineStartCount = 0
+
+        let first = try addStrokeBlock(stroke(x0: 10, x1: 30, y0: 100, y1: 140),
+                                       frame: Rect(x: 10, y: 100, width: 20, height: 40))
+        session.commitLetterLine()
+        let secondCursorX = session.letterCursor.x
+        _ = try addStrokeBlock(stroke(x0: 10, x1: 30, y0: 100, y1: 140),
+                               frame: Rect(x: 10, y: 100, width: 20, height: 40))
+        session.commitLetterLine()
+        XCTAssertEqual(try store.strokeBlocks(in: recordID).count, 2)
+
+        session.letterBackspace()
+
+        let remaining = try store.strokeBlocks(in: recordID)
+        XCTAssertEqual(remaining.count, 1, "backspace deletes the last committed letter's blocks")
+        XCTAssertEqual(remaining.first?.id, first.id)
+        XCTAssertEqual(session.letterCursor.x, secondCursorX, accuracy: 1e-9)
+        XCTAssertEqual(session.letterCursor.y, 90, accuracy: 1e-9)
+
+        session.letterBackspace()
+        XCTAssertEqual(try store.strokeBlocks(in: recordID).count, 0)
     }
 
     func testTrackLetterWritingFollowsCamera() {

@@ -52,6 +52,9 @@ struct RecordCanvasView: View {
                                let pt = inkStore.strokes.last?.points.last {
                                 session.trackLetterWriting(x: pt.location.x, y: pt.location.y)
                             }
+                        },
+                        onStrokeBegin: { x, y in
+                            session.handleLetterStrokeBegin(x: x, y: y)
                         }
                     )
                     .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
@@ -59,6 +62,21 @@ struct RecordCanvasView: View {
                     InkRenderView(strokes: inkStore.strokes, style: session.letterArea != nil ? .letterMode : .normal, liveStroke: inkStore.liveStroke, zoomScale: session.transform.scale, rewriteToken: session.drawingRewriteToken)
                         .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
                         .allowsHitTesting(false)
+
+                    if let area = session.letterArea {
+                        // Baseline guide: shows where committed letter bodies
+                        // will land; descenders (j, g, q) have room below it.
+                        Color.clear
+                            .frame(width: CGFloat(session.contentWidth), height: CGFloat(session.contentHeight))
+                            .overlay {
+                                LetterBaselineGuide(
+                                    area: area,
+                                    baselineY: session.letterCursor.y + CanvasSessionState.letterCommittedHeight,
+                                    scale: session.transform.scale
+                                )
+                            }
+                            .allowsHitTesting(false)
+                    }
 
                     captureOverlay
 
@@ -80,6 +98,12 @@ struct RecordCanvasView: View {
         .navigationTitle(record.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .bottomBar)
+        .overlay(alignment: .bottom) {
+            if session.letterArea != nil {
+                BackspaceButton { session.letterBackspace() }
+                    .padding(.bottom, 12)
+            }
+        }
         .overlay(alignment: .top) {
             CanvasToolbarView(
                 session: session,
@@ -215,17 +239,22 @@ private struct PKCanvasContainer: UIViewControllerRepresentable {
     let onStrokeCaptured: () -> Void
     /// (visibleStrokes, savedStrokes) reported from the coordinator.
     let onStateChange: (Int, Int) -> Void
+    /// First point of a newly started stroke (canvas points) — Letter Mode's
+    /// commit-on-new-letter trigger.
+    let onStrokeBegin: (Double, Double) -> Void
 
     func makeUIViewController(context: Context) -> CanvasViewController {
         let controller = CanvasViewController(recordID: recordID, store: store, inkStore: inkStore)
         controller.coordinator.onStateChange = onStateChange
         controller.coordinator.onStrokeCaptured = onStrokeCaptured
+        controller.coordinator.onStrokeBegin = onStrokeBegin
         return controller
     }
 
     func updateUIViewController(_ uiViewController: CanvasViewController, context: Context) {
         uiViewController.coordinator.onStateChange = onStateChange
         uiViewController.coordinator.onStrokeCaptured = onStrokeCaptured
+        uiViewController.coordinator.onStrokeBegin = onStrokeBegin
         if uiViewController.coordinator.lastRewriteToken != rewriteToken {
             uiViewController.coordinator.lastRewriteToken = rewriteToken
             uiViewController.coordinator.rewriteDrawingFromStore()
@@ -310,6 +339,8 @@ final class CanvasViewController: UIViewController {
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var onStateChange: ((Int, Int) -> Void)?
         var onStrokeCaptured: (() -> Void)?
+        /// First point of a newly started stroke (canvas points).
+        var onStrokeBegin: ((Double, Double) -> Void)?
         /// Last rewrite token consumed (see PKCanvasContainer).
         var lastRewriteToken = 0
 
@@ -440,6 +471,7 @@ final class CanvasViewController: UIViewController {
             if !liveTracking {
                 liveTracking = true
                 livePoints = []
+                onStrokeBegin?(point.x, point.y)
             }
             // Refresh every event, not just at stroke start: the picker can
             // change mid-stroke and per-event sampling can't go stale.
@@ -460,9 +492,9 @@ final class CanvasViewController: UIViewController {
         /// PKCanvasView rendering provides the live ink the user sees.
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             let all = canvasView.drawing.strokes
-            updateRendered(from: all)
+            updateRendered(from: all, traits: canvasView.traitCollection)
             if all.count > persistedCount {
-                let newStrokes = all[persistedCount...].map(PKStrokeConverter.strokeData)
+                let newStrokes = all[persistedCount...].map { PKStrokeConverter.strokeData(from: $0, traits: canvasView.traitCollection) }
                 persist(added: newStrokes)
                 persistedCount = all.count
                 onStrokeCaptured?()
@@ -476,7 +508,7 @@ final class CanvasViewController: UIViewController {
         /// Safety flush in case a stroke completes without a drawing-did-change
         /// (no-op when `persistedCount` is already current).
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-            persistCompleted(from: canvasView.drawing.strokes)
+            persistCompleted(from: canvasView.drawing.strokes, traits: canvasView.traitCollection)
             // Safety: touches don't always arrive (the "line only on lift"
             // case) — never leave a stale preview or tracking flag behind.
             livePoints = []
@@ -484,10 +516,10 @@ final class CanvasViewController: UIViewController {
             inkStore?.clearLiveStroke()
         }
 
-        private func updateRendered(from all: [PKStroke]) {
+        private func updateRendered(from all: [PKStroke], traits: UITraitCollection) {
             guard let inkStore else { return }
             if all.count > renderedCount {
-                let new = all[renderedCount...].map(PKStrokeConverter.strokeData)
+                let new = all[renderedCount...].map { PKStrokeConverter.strokeData(from: $0, traits: traits) }
                 rendered.append(contentsOf: new)
                 renderedCount = all.count
             } else if all.count < renderedCount {
@@ -495,15 +527,15 @@ final class CanvasViewController: UIViewController {
                 renderedCount = all.count
             } else if !all.isEmpty {
                 // Same count but the last stroke is in progress — re-render it.
-                rendered[all.count - 1] = PKStrokeConverter.strokeData(from: all[all.count - 1])
+                rendered[all.count - 1] = PKStrokeConverter.strokeData(from: all[all.count - 1], traits: traits)
             }
             inkStore.load(rendered)
         }
 
-        private func persistCompleted(from all: [PKStroke]) {
+        private func persistCompleted(from all: [PKStroke], traits: UITraitCollection) {
             guard let store, let recordID else { return }
             guard all.count > persistedCount else { return }
-            let newStrokes = all[persistedCount...].map(PKStrokeConverter.strokeData)
+            let newStrokes = all[persistedCount...].map { PKStrokeConverter.strokeData(from: $0, traits: traits) }
             persist(added: newStrokes)
             persistedCount = all.count
             onStrokeCaptured?()
@@ -532,6 +564,69 @@ final class CanvasViewController: UIViewController {
                 try? store.deleteBlock(block.id)
             }
         }
+    }
+}
+
+/// Dashed baseline guide for Letter Mode, drawn in canvas coordinates so it
+/// zooms and pans with the writing area.
+private struct LetterBaselineGuide: View {
+    let area: Rect
+    let baselineY: Double
+    let scale: Double
+
+    var body: some View {
+        Path { path in
+            path.move(to: CGPoint(x: CGFloat(area.minX), y: CGFloat(baselineY)))
+            path.addLine(to: CGPoint(x: CGFloat(area.maxX), y: CGFloat(baselineY)))
+        }
+        .stroke(
+            Color.accentColor.opacity(0.45),
+            style: StrokeStyle(
+                lineWidth: 1.5 / CGFloat(max(scale, 0.01)),
+                dash: [6 / CGFloat(max(scale, 0.01)), 5 / CGFloat(max(scale, 0.01))]
+            )
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+/// Letter Mode backspace: tap deletes the last committed letter (with any
+/// folded diacritic); press-and-hold repeats. Screen-space, bottom center.
+private struct BackspaceButton: View {
+    let action: () -> Void
+    @State private var repeatTimer: Timer?
+
+    var body: some View {
+        Image(systemName: "delete.left")
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .background(.thinMaterial, in: Circle())
+            .contentShape(Circle())
+            .accessibilityIdentifier("letterBackspace")
+            .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 30) {
+                // (unreachable with .infinity duration) perform stops the repeat
+                stopRepeat()
+            } onPressingChanged: { pressing in
+                if pressing {
+                    action()
+                    startRepeat()
+                } else {
+                    stopRepeat()
+                }
+            }
+    }
+
+    private func startRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) { _ in
+            DispatchQueue.main.async { action() }
+        }
+    }
+
+    private func stopRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
     }
 }
 

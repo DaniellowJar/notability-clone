@@ -28,3 +28,4 @@ keys.env
 # Python
 __pycache__/
 *.pyc
+memory.md

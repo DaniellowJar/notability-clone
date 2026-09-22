@@ -6,13 +6,14 @@ import PencilKit
 /// blob exists AND the record has no stroke blocks yet. Runs in one pass.
 enum DrawingMigrator {
     @discardableResult
-    static func migrateIfNeeded(recordID: UUID, store: NotabilityStore) -> Bool {
+    static func migrateIfNeeded(recordID: UUID, store: NotabilityStore, traits: UITraitCollection? = nil) -> Bool {
         guard let blob = try? store.drawingData(for: recordID) else { return false }
         guard let drawing = try? PKDrawing(data: blob) else { return false }
         let existing = (try? store.blocks(in: recordID)) ?? []
         guard !existing.contains(where: { $0.kind == .stroke }) else { return false }
 
-        let strokes = drawing.strokes.map(PKStrokeConverter.strokeData)
+        let resolved = traits ?? UITraitCollection.current
+        let strokes = drawing.strokes.map { PKStrokeConverter.strokeData(from: $0, traits: resolved) }
         do {
             for stroke in strokes {
                 _ = try store.addBlock(

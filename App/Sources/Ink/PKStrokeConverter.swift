@@ -1,11 +1,21 @@
 import NotabilityCore
 import PencilKit
+import UIKit
 
 /// Lossy-but-faithful conversion between PencilKit strokes and the core
 /// `StrokeData` model. Used to (a) capture ink from the PKCanvasView and
 /// (b) rebuild the PKCanvasView's drawing on open so undo/diff stay consistent.
 enum PKStrokeConverter {
-    static func strokeData(from stroke: PKStroke) -> StrokeData {
+    /// `traits` must be the capturing canvas's own trait collection: dynamic
+    /// ink colors (adding a white `.label` pen in dark mode) only resolve to
+    /// their dark appearance under dark traits. The ambient
+    /// `UITraitCollection.current` is unreliable between UI hosts, which
+    /// persisted e.g. white ink as black and made it invisible forever after.
+    static func colorHex(from ink: PKInk, traits: UITraitCollection) -> String {
+        ink.color.hexString(resolvedWith: traits)
+    }
+
+    static func strokeData(from stroke: PKStroke, traits: UITraitCollection) -> StrokeData {
         // PKStrokePath is a Collection of PKStrokePoint — read the control
         // points directly (no interpolation strategy to depend on).
         let samples = Array(stroke.path)
@@ -22,7 +32,7 @@ enum PKStrokeConverter {
         // iOS 18 SDK: PKInk.color is a UIColor and PKInk has no width property —
         // use the stroke's sampled point widths for the base width instead.
         let baseWidth = Double(samples.map { $0.size.width }.max() ?? 3)
-        return StrokeData(points: points, colorHex: stroke.ink.color.hexString, baseWidth: baseWidth)
+        return StrokeData(points: points, colorHex: colorHex(from: stroke.ink, traits: traits), baseWidth: baseWidth)
     }
 
     static func stroke(from data: StrokeData) -> PKStroke {

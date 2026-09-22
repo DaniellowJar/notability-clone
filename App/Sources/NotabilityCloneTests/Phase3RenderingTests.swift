@@ -18,13 +18,40 @@ final class Phase3RenderingTests: XCTestCase {
 
     func testStrokeConverterRoundTrip() {
         let drawing = drawingWithOneStroke()
-        let data = PKStrokeConverter.strokeData(from: drawing.strokes[0])
+        let data = PKStrokeConverter.strokeData(from: drawing.strokes[0], traits: UITraitCollection.current)
         XCTAssertFalse(data.points.isEmpty)
         XCTAssertFalse(data.colorHex.isEmpty)
         XCTAssertGreaterThan(data.baseWidth, 0)
 
         let rebuilt = PKStrokeConverter.drawing(from: [data])
         XCTAssertEqual(rebuilt.strokes.count, 1)
+    }
+
+    /// Regression: dynamic ink colors (the default `.label` pen) must resolve
+    /// against the canvas's own traits during capture. The ambient
+    /// `UITraitCollection.current` is unreliable at that moment — in dark mode
+    /// white ink was persisted as black hex and stayed invisible.
+    func testConverterResolvesInkAgainstGivenTraits() {
+        let drawing = drawingWithOneStroke() // ink color: .black
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        let data = PKStrokeConverter.strokeData(from: drawing.strokes[0], traits: dark)
+        // Static black is black under both styles...
+        XCTAssertEqual(data.colorHex, "#000000")
+
+        // ...but a dynamic `.label` resolves white under dark traits.
+        let labelPoint = PKStrokePoint(
+            location: CGPoint(x: 10, y: 10), timeOffset: 0,
+            size: CGSize(width: 3, height: 3), opacity: 1,
+            force: 1, azimuth: 0, altitude: 90
+        )
+        let labelPath = PKStrokePath(controlPoints: [labelPoint], creationDate: Date())
+        let labelStroke = PKStroke(ink: PKInk(.pen, color: .label), path: labelPath)
+        let darkLabel = PKStrokeConverter.strokeData(from: labelStroke, traits: dark)
+        XCTAssertEqual(darkLabel.colorHex, "#FFFFFF")
+        let lightLabel = PKStrokeConverter.strokeData(
+            from: labelStroke, traits: UITraitCollection(userInterfaceStyle: .light)
+        )
+        XCTAssertEqual(lightLabel.colorHex, "#000000")
     }
 
     func testDrawingMigratorConvertsBlobToStrokeBlocks() throws {
