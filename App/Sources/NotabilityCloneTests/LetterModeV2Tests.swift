@@ -141,7 +141,9 @@ final class LetterModeV2Tests: XCTestCase {
             guard case .stroke(let list, _, _) = block.payload, let s = list.first else {
                 return XCTFail("expected stroke payload")
             }
-            if s.bounds.minX < 30 { normalBounds = s.bounds } else { tailBounds = s.bounds }
+            // Mapped coordinates: the letter sits at cursor.x (0..6), the
+            // tail further right (12..18).
+            if s.bounds.maxX <= 8 { normalBounds = s.bounds } else { tailBounds = s.bounds }
         }
         // Body letters fill exactly [cursor.y, cursor.y + 12]; the tail hangs
         // below the committed baseline instead of squashing the whole line.

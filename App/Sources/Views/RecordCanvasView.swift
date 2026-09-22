@@ -362,6 +362,9 @@ final class CanvasViewController: UIViewController {
         private var liveColorHex = "#000000"
         private var liveWidth = 3.0
         private var lastLivePush: TimeInterval = 0
+        /// True once a stroke began with a real tool — gates the tool-color
+        /// override in `convertNewStrokes`.
+        private var toolSnapshotted = false
 
         func loadDrawing(into canvas: PKCanvasView, store: NotabilityStore, recordID: UUID, inkStore: InkStrokeStore) {
             self.canvas = canvas
@@ -446,6 +449,27 @@ final class CanvasViewController: UIViewController {
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             livePoints = []
             snapshotLiveTool(from: canvasView)
+            toolSnapshotted = true
+        }
+
+        /// Regression context: `PKInk` flattens dynamic colors at construction
+        /// time against the *ambient* traits — a `.label` pen captured on a
+        /// light-ambient host becomes static black forever, and no trait
+        /// passed at conversion time can recover it (proved by CI,
+        /// 2026-09-22). So persisted strokes take their color from the tool
+        /// snapshot (`liveColorHex`, resolved against
+        /// `canvas.traitCollection` at stroke begin — already correct), not
+        /// from `stroke.ink.color`.
+        private func convertNewStrokes(
+            from source: Array<PKStroke>.SubSequence, traits: UITraitCollection
+        ) -> [StrokeData] {
+            let converted = source.map { PKStrokeConverter.strokeData(from: $0, traits: traits) }
+            guard toolSnapshotted else { return converted }
+            return converted.map { stroke in
+                var s = stroke
+                s.colorHex = liveColorHex
+                return s
+            }
         }
 
         /// Live touch path for the in-progress stroke preview, so ink appears
@@ -494,7 +518,7 @@ final class CanvasViewController: UIViewController {
             let all = canvasView.drawing.strokes
             updateRendered(from: all, traits: canvasView.traitCollection)
             if all.count > persistedCount {
-                let newStrokes = all[persistedCount...].map { PKStrokeConverter.strokeData(from: $0, traits: canvasView.traitCollection) }
+                let newStrokes = convertNewStrokes(from: all[persistedCount...], traits: canvasView.traitCollection)
                 persist(added: newStrokes)
                 persistedCount = all.count
                 onStrokeCaptured?()
@@ -526,8 +550,10 @@ final class CanvasViewController: UIViewController {
                 rendered = Array(rendered.prefix(all.count))
                 renderedCount = all.count
             } else if !all.isEmpty {
-                // Same count but the last stroke is in progress — re-render it.
-                rendered[all.count - 1] = PKStrokeConverter.strokeData(from: all[all.count - 1], traits: traits)
+                // Same count but the last stroke is in progress — re-render it
+                // with the tool color override (PKInk flattening trap).
+                let converted = convertNewStrokes(from: all[(all.count - 1)...], traits: traits)
+                rendered[all.count - 1] = converted[0]
             }
             inkStore.load(rendered)
         }
@@ -535,7 +561,7 @@ final class CanvasViewController: UIViewController {
         private func persistCompleted(from all: [PKStroke], traits: UITraitCollection) {
             guard let store, let recordID else { return }
             guard all.count > persistedCount else { return }
-            let newStrokes = all[persistedCount...].map { PKStrokeConverter.strokeData(from: $0, traits: traits) }
+            let newStrokes = convertNewStrokes(from: all[persistedCount...], traits: traits)
             persist(added: newStrokes)
             persistedCount = all.count
             onStrokeCaptured?()
